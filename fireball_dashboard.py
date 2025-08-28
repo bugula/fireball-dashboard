@@ -87,10 +87,17 @@ st.plotly_chart(fig0, use_container_width=True)
 
 # --- All Time Frequency ---
 st.subheader("Fireball Frequency (All Time)")
-freq = df["fireball"].value_counts().reset_index()
+
+# Count frequencies
+freq = df["fireball"].value_counts().reindex([str(i) for i in range(10)], fill_value=0).reset_index()
 freq.columns = ["Fireball", "Count"]
+
+# Plot
 fig1 = px.bar(freq, x="Fireball", y="Count", text="Count", title="Fireball Frequency")
+fig1.update_xaxes(type="category", categoryorder="array", categoryarray=[str(i) for i in range(10)])
+
 st.plotly_chart(fig1, use_container_width=True)
+
 
 # --- Heatmap by Weekday ---
 st.subheader("Fireball by Weekday Heatmap")
@@ -118,6 +125,7 @@ fig3 = px.imshow(
     title="Fireball Frequency by Weekday"
 )
 st.plotly_chart(fig3, use_container_width=True)
+
 
 
 
