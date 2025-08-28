@@ -10,9 +10,17 @@ st.set_page_config(page_title="Fireball Dashboard", layout="wide")
 st.title("Illinois Pick 3 + Fireball Dashboard")
 
 # --- Google Sheets Setup ---
+import json
+
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("fireball-creds.json", scope)
+
+# Load creds from Streamlit Cloud Secrets
+creds = ServiceAccountCredentials.from_json_keyfile_dict(
+    dict(st.secrets["gcp_service_account"]),
+    scope
+)
 client = gspread.authorize(creds)
+
 
 # Open Google Sheets
 data_sheet = client.open("fireball_data").sheet1
@@ -83,3 +91,4 @@ if fire_rec:
 
     # Log recommendation to rec_sheet
     rec_sheet.append_row([str(datetime.now().date()), ''.join(pick3), fire_rec])
+
