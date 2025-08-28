@@ -149,13 +149,39 @@ if not rec_df.empty:
     )
 
     # Show history table
-    st.table(merged[["date", "draw", "recommended_pick3", "recommended_fireball", "fireball", "hit"]]
-             .sort_values(["date", "draw"], ascending=[False, True])
-             .head(20))
+    st.table(
+        merged[["date", "draw", "recommended_pick3", "recommended_fireball", "fireball", "hit"]]
+        .sort_values(["date", "draw"], ascending=[False, True])
+        .head(20)
+    )
 
     # Show running accuracy %
     hit_rate = (merged["hit"] == "✅").mean() * 100
     st.write(f"Overall Fireball Hit Rate: **{hit_rate:.1f}%**")
+
+    # --- Accuracy Chart ---
+    chart_df = merged.sort_values(["date", "draw"]).tail(30)  # last ~15 days (30 draws)
+    chart_df["Hit Value"] = chart_df["hit"].map({"✅": 1, "❌": 0})
+
+    fig_acc = px.scatter(
+        chart_df,
+        x="date",
+        y="Hit Value",
+        color="hit",
+        symbol="draw",
+        title="Hit/Miss Over Time (Last 30 Draws)",
+        labels={"Hit Value": "Result", "date": "Date"},
+        color_discrete_map={"✅": "green", "❌": "red"}
+    )
+    fig_acc.update_yaxes(
+        tickvals=[0, 1],
+        ticktext=["Miss", "Hit"],
+        range=[-0.5, 1.5]
+    )
+    st.plotly_chart(fig_acc, use_container_width=True)
+
 else:
     st.info("No recommendations logged yet.")
+
+
 
