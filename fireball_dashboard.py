@@ -22,6 +22,15 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(
 client = gspread.authorize(creds)
 
 
+# Debug: List all accessible spreadsheets
+try:
+    spreadsheets = client.openall()
+    st.write("Accessible spreadsheets:", [s.title for s in spreadsheets])
+except Exception as e:
+    st.error(f"Error listing spreadsheets: {e}")
+
+
+
 # Open Google Sheets
 data_sheet = client.open("fireball_data").sheet1
 rec_sheet = client.open("fireball_recommendations").sheet1
@@ -91,4 +100,5 @@ if fire_rec:
 
     # Log recommendation to rec_sheet
     rec_sheet.append_row([str(datetime.now().date()), ''.join(pick3), fire_rec])
+
 
