@@ -90,10 +90,22 @@ st.table(last14[["date", "draw", "Pick 3", "fireball"]])
 
 # --- Frequency in Last 14 ---
 st.subheader("📊 Fireball Frequency (Last 14 Draws)")
-freq14 = last14["fireball"].value_counts().reset_index()
+
+# Force inclusion of all fireballs 0–9
+freq14 = last14["fireball"].value_counts().reindex([str(i) for i in range(10)], fill_value=0).reset_index()
 freq14.columns = ["Fireball", "Count"]
-fig0 = px.bar(freq14, x="Fireball", y="Count", text="Count", title="Frequency in Last 14 Draws")
+
+fig0 = px.bar(
+    freq14,
+    x="Fireball",
+    y="Count",
+    text="Count",
+    title="Frequency in Last 14 Draws"
+)
+fig0.update_xaxes(type="category", categoryorder="array", categoryarray=[str(i) for i in range(10)])
+
 st.plotly_chart(fig0, use_container_width=True)
+
 
 # --- All Time Frequency ---
 st.subheader("Fireball Frequency (All Time)")
@@ -146,3 +158,4 @@ if not rec_df.empty:
     st.write(f"Overall Fireball Hit Rate: **{hit_rate:.1f}%**")
 else:
     st.info("No recommendations logged yet.")
+
