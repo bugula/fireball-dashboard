@@ -5,22 +5,20 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import os
+import json
 
 st.set_page_config(page_title="Fireball Dashboard", layout="wide")
 st.title("Illinois Pick 3 + Fireball Dashboard")
 
 # --- Google Sheets Setup ---
-import json
-
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
 # Load creds from Streamlit Cloud Secrets
 creds = ServiceAccountCredentials.from_json_keyfile_dict(
-    dict(st.secrets["gcp_service_account"]),
+    st.secrets["gcp_service_account"],
     scope
 )
 client = gspread.authorize(creds)
-
 
 # Open Google Sheets
 data_sheet = client.open("fireball_data").sheet1
@@ -68,9 +66,19 @@ for col in ["num1", "num2", "num3"]:
 if fire_rec:
     st.success(f"Recommended Next Draw: **{''.join(pick3)} + Fireball {fire_rec}**")
 
-    # Log recommendation to rec_sheet
-    rec_sheet.append_row([str(datetime.now().date()), ''.join(pick3), fire_rec])
-    
+    # --- Log recommendation only once per draw ---
+    rec_data = rec_sheet.get_all_records()
+    today_str = str(datetime.now().date())
+    draw_type_for_rec = "Midday" if datetime.now().hour < 18 else "Evening"
+
+    already_logged = any(
+        str(row["date"]) == today_str and str(row.get("draw")) == draw_type_for_rec
+        for row in rec_data
+    )
+
+    if not already_logged:
+        rec_sheet.append_row([today_str, draw_type_for_rec, ''.join(pick3), fire_rec])
+
 # --- Quick View: Last 14 Draws ---
 st.subheader("🕒 Last 14 Draws (Pick 3 + Fireball)")
 df["draw_sort"] = df["draw"].map({"Midday": 0, "Evening": 1})
@@ -87,36 +95,20 @@ st.plotly_chart(fig0, use_container_width=True)
 
 # --- All Time Frequency ---
 st.subheader("Fireball Frequency (All Time)")
-
-# Count frequencies
 freq = df["fireball"].value_counts().reindex([str(i) for i in range(10)], fill_value=0).reset_index()
 freq.columns = ["Fireball", "Count"]
-
-# Plot
 fig1 = px.bar(freq, x="Fireball", y="Count", text="Count", title="Fireball Frequency")
 fig1.update_xaxes(type="category", categoryorder="array", categoryarray=[str(i) for i in range(10)])
-
 st.plotly_chart(fig1, use_container_width=True)
-
 
 # --- Heatmap by Weekday ---
 st.subheader("Fireball by Weekday Heatmap")
-
-# Create weekday column
 weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 df["weekday"] = pd.to_datetime(df["date"]).dt.day_name()
-
-# Group data
 heatmap_data = df.groupby(["weekday", "fireball"]).size().reset_index(name="count")
-
-# Force fireball order 0–9
 fireball_order = [str(i) for i in range(10)]
-
-# Pivot for heatmap
 pivot = heatmap_data.pivot(index="weekday", columns="fireball", values="count") \
     .reindex(weekday_order).fillna(0)[fireball_order]
-
-# Plot heatmap
 fig3 = px.imshow(
     pivot,
     labels=dict(x="Fireball", y="Weekday", color="Count"),
@@ -125,7 +117,3 @@ fig3 = px.imshow(
     title="Fireball Frequency by Weekday"
 )
 st.plotly_chart(fig3, use_container_width=True)
-
-
-
-
