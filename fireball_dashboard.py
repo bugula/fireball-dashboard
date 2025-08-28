@@ -46,7 +46,10 @@ with st.sidebar.form("new_draw_form"):
         st.sidebar.success(f"✅ Added {draw_type} draw {num1}{num2}{num3} + Fireball {new_fireball}")
 
 # --- Recommendation Engine ---
-st.subheader("🔥 Recommended Numbers for NEXT Draw")
+# Decide which draw this recommendation is for
+draw_type_for_rec = "Midday" if datetime.now().hour < 18 else "Evening"
+
+st.subheader(f"🔥 Recommended Numbers for {draw_type_for_rec} Draw")
 recent_window = df[pd.to_datetime(df["date"]) > (pd.to_datetime(df["date"]).max() - pd.Timedelta(days=14))]
 
 # Fireball recommendation
@@ -64,12 +67,11 @@ for col in ["num1", "num2", "num3"]:
     pick3.append(str(combined.idxmax()) if not combined.empty else "0")
 
 if fire_rec:
-    st.success(f"Recommended Next Draw: **{''.join(pick3)} + Fireball {fire_rec}**")
+    st.success(f"Recommended: **{''.join(pick3)} + Fireball {fire_rec}**")
 
     # --- Log recommendation only once per draw ---
     rec_data = rec_sheet.get_all_records()
     today_str = str(datetime.now().date())
-    draw_type_for_rec = "Midday" if datetime.now().hour < 18 else "Evening"
 
     already_logged = any(
         str(row["date"]) == today_str and str(row.get("draw")) == draw_type_for_rec
@@ -117,3 +119,30 @@ fig3 = px.imshow(
     title="Fireball Frequency by Weekday"
 )
 st.plotly_chart(fig3, use_container_width=True)
+
+# --- Recommendation History & Accuracy ---
+st.subheader("📊 Recommendation Accuracy History")
+
+# Load recommendations
+rec_df = pd.DataFrame(rec_sheet.get_all_records())
+
+if not rec_df.empty:
+    rec_df["date"] = pd.to_datetime(rec_df["date"], errors="coerce").dt.date
+
+    # Merge actual draws with recommendations
+    merged = pd.merge(df, rec_df, how="inner", left_on=["date", "draw"], right_on=["date", "draw"])
+    merged["hit"] = merged.apply(
+        lambda r: "✅" if str(r["fireball"]) == str(r["recommended_fireball"]) else "❌",
+        axis=1
+    )
+
+    # Show history table
+    st.table(merged[["date", "draw", "recommended_pick3", "recommended_fireball", "fireball", "hit"]]
+             .sort_values(["date", "draw"], ascending=[False, True])
+             .head(20))
+
+    # Show running accuracy %
+    hit_rate = (merged["hit"] == "✅").mean() * 100
+    st.write(f"Overall Fireball Hit Rate: **{hit_rate:.1f}%**")
+else:
+    st.info("No recommendations logged yet.")
