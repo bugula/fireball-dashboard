@@ -67,7 +67,9 @@ for col in ["num1", "num2", "num3"]:
     pick3.append(str(combined.idxmax()) if not combined.empty else "0")
 
 if fire_rec:
-    st.success(f"Recommended: **{''.join(pick3)} + Fireball {fire_rec}**")
+    pick3_display = ", ".join(pick3)
+    st.success(f"Recommended: **{pick3_display} + 🔥 Fireball {fire_rec}**")
+
 
     # --- Log recommendation only once per draw ---
     rec_data = rec_sheet.get_all_records()
@@ -133,12 +135,12 @@ fig3 = px.imshow(
 st.plotly_chart(fig3, use_container_width=True)
 
 # --- Recommendation History & Accuracy ---
-st.subheader("📊 Recommendation Accuracy History")
 
 # Load recommendations
 rec_df = pd.DataFrame(rec_sheet.get_all_records())
 
 if not rec_df.empty:
+    st.subheader("📊 Recommendation Accuracy History")
     rec_df["date"] = pd.to_datetime(rec_df["date"], errors="coerce").dt.date
 
     # Merge actual draws with recommendations
@@ -182,6 +184,7 @@ if not rec_df.empty:
 
 else:
     st.info("No recommendations logged yet.")
+
 
 
 
