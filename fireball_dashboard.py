@@ -130,11 +130,14 @@ if not df.empty:
     )
     styled_last14["Fireball"] = styled_last14["fireball"].apply(lambda x: style_number(x, fireball=True))
 
-    st.write(
-        styled_last14[["date", "draw", "Pick 3", "Fireball"]]
-        .to_html(escape=False, index=False),
+    st.markdown(
+        "<div style='width:100%;'>"
+        + styled_last14[["date", "draw", "Pick 3", "Fireball"]]
+            .to_html(escape=False, index=False)
+        + "</div>",
         unsafe_allow_html=True
     )
+
 
 # --- Frequency in Last 14 ---
 if not df.empty:
@@ -215,5 +218,6 @@ if not rec_df.empty and not df.empty:
                              color_discrete_map={"✅": "green", "❌": "red"})
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
