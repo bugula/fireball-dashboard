@@ -137,29 +137,29 @@ st.plotly_chart(fig3, use_container_width=True)
 # --- Streaks & Gaps (Draws Since Last Appearance) ---
 st.subheader("⏳ Fireball Streaks & Gaps")
 
-# Sort by date/draw to get chronological sequence
-df_sorted = df.sort_values(["date", "draw_sort"])
+# Ensure draw_sort exists (Midday before Evening within a day)
+if "draw_sort" not in df.columns:
+    df["draw_sort"] = df["draw"].map({"Midday": 0, "Evening": 1})
 
-# Track last seen index for each Fireball
-last_seen = {}
-gaps = {}
+# Chronological order and zero-based positions
+chron = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
+chron["pos"] = chron.index
 
-for idx, row in df_sorted.iterrows():
-    fb = str(row["fireball"])
-    last_seen[fb] = idx  # update last appearance
+# Last seen position for each fireball
+last_pos = chron.groupby("fireball")["pos"].max()
 
-# Compute gap length = total draws - last seen index
-total_draws = len(df_sorted)
-for num in [str(i) for i in range(10)]:
-    if num in last_seen:
-        gaps[num] = total_draws - last_seen[num] - 1
+# Compute gaps for digits 0–9 using positions
+digits = [str(i) for i in range(10)]
+N = len(chron)
+gaps = []
+for d in digits:
+    if d in last_pos.index:
+        gap = (N - 1) - int(last_pos.loc[d])   # draws since last seen
     else:
-        # If a number has never been seen, gap = total draws
-        gaps[num] = total_draws
+        gap = N  # never seen in dataset
+    gaps.append({"Fireball": d, "Draws Since Last Seen": gap})
 
-# Build DataFrame for visualization
-gaps_df = pd.DataFrame(list(gaps.items()), columns=["Fireball", "Draws Since Last Seen"])
-gaps_df = gaps_df.sort_values("Fireball")
+gaps_df = pd.DataFrame(gaps)
 
 # Plot
 fig_gaps = px.bar(
@@ -169,7 +169,9 @@ fig_gaps = px.bar(
     text="Draws Since Last Seen",
     title="How Long Since Each Fireball Last Hit"
 )
+fig_gaps.update_xaxes(type="category", categoryorder="array", categoryarray=digits)
 st.plotly_chart(fig_gaps, use_container_width=True)
+
 
 
 # --- Recommendation History & Accuracy ---
@@ -230,4 +232,5 @@ if not rec_df.empty:
             range=[-0.5, 1.5]
         )
         st.plotly_chart(fig_acc, use_container_width=True)
+
 
