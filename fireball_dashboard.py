@@ -71,27 +71,20 @@ st.write(df.head())
 # --- Recommendation Engine ---
 # Decide which draw this recommendation is for (flip from the most recent logged draw)
 
+# Decide which draw this recommendation is for (flip from the most recent logged draw)
 if not df.empty:
-    # Ensure draw_sort exists
-    if "draw_sort" not in df.columns:
-        df["draw_sort"] = df["draw"].map({"Midday": 0, "Evening": 1})
+    # Make sure draw_sort is always present
+    df["draw_sort"] = df["draw"].map({"Midday": 0, "Evening": 1})
 
-    # Force chronological sort by date + draw order
-    df_sorted = df.sort_values(["date", "draw_sort"], ascending=[True, True]).reset_index(drop=True)
-
-    # Take the last row = most recent draw
+    # Get the most recent row (latest date + latest draw on that date)
+    df_sorted = df.sort_values(["date", "draw_sort"], ascending=[True, True])
     last_draw = df_sorted.iloc[-1]
 
-    # Flip it
-    if last_draw["draw"] == "Midday":
-        draw_type_for_rec = "Evening"
-    else:
-        draw_type_for_rec = "Midday"
-
-    # Debug output so we can see what it's detecting
-    st.write("DEBUG - Last Draw Detected:", last_draw["date"], last_draw["draw"])
+    # Flip draw type
+    draw_type_for_rec = "Evening" if last_draw["draw"] == "Midday" else "Midday"
 else:
-    draw_type_for_rec = "Midday"  # default if no data yet
+    draw_type_for_rec = "Midday"  # fallback if no data yet
+
 
 
 
@@ -266,6 +259,7 @@ if not rec_df.empty:
         )
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
