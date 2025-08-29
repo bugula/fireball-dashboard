@@ -72,7 +72,7 @@ else:
     draw_type_for_rec = "Midday"  # fallback if no data yet
 
 st.markdown("<br>", unsafe_allow_html=True)
-st.subheader(f"🔥 Recommended Numbers for {draw_type_for_rec}")
+st.subheader(f"🔥 Recommended for {draw_type_for_rec}")
 recent_window = df[pd.to_datetime(df["date"]) > (pd.to_datetime(df["date"]).max() - pd.Timedelta(days=14))] if not df.empty else df
 
 # Fireball recommendation
@@ -259,6 +259,7 @@ if not rec_df.empty and not df.empty:
                              color_discrete_map={"✅": "green", "❌": "red"})
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
