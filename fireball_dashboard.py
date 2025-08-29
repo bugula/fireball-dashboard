@@ -65,7 +65,9 @@ st.write("DEBUG - Last Draw Row:", last_draw)
 # --- Recommendation Engine ---
 # Decide which draw this recommendation is for (flip from the most recent logged draw)
 if not df.empty:
-    df["draw_sort"] = df["draw"].map({"Midday": 0, "Evening": 1})
+    # Ensure draw_sort exists
+    if "draw_sort" not in df.columns:
+        df["draw_sort"] = df["draw"].map({"Midday": 0, "Evening": 1})
 
     # Force chronological sort by date + draw order
     df_sorted = df.sort_values(["date", "draw_sort"], ascending=[True, True]).reset_index(drop=True)
@@ -257,6 +259,7 @@ if not rec_df.empty:
         )
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
