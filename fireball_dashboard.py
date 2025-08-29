@@ -262,11 +262,24 @@ if not rec_df.empty and not df.empty:
         )
 
         # Table display
-        st.table(
-            merged[["date", "draw", "recommended_fireball", "fireball", "hit"]]
-            .sort_values(["date", "draw"], ascending=[False, False])
-            .reset_index(drop=True)   # this removes the index column
+        # Convert to styled HTML (no index)
+        history_html = merged[["date", "draw", "recommended_fireball", "fireball", "hit"]] \
+            .sort_values(["date", "draw"], ascending=[False, False]) \
+            .to_html(escape=False, index=False)
+
+        # Inject CSS to style table
+        history_html = history_html.replace(
+            "<table border=\"1\" class=\"dataframe\">",
+            "<table style='width:100%; border-collapse:collapse; font-size:16px; text-align:center;'>"
+        ).replace(
+            "<td>", "<td style='text-align:center; vertical-align:middle;'>"
+        ).replace(
+            "<th>", "<th style='text-align:center; vertical-align:middle;'>"
         )
+
+        # Render table
+        st.markdown(history_html, unsafe_allow_html=True)
+
 
 
         # Hit rate
@@ -293,4 +306,5 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to display yet.")
 else:
     st.info("Not enough data to display recommendation accuracy.")
+
 
