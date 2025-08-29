@@ -60,23 +60,29 @@ with st.sidebar.form("new_draw_form"):
         st.sidebar.success(f"✅ Added {draw_type} draw {num1}{num2}{num3} + Fireball {new_fireball}")
 
 # --- Recommendation Engine ---
-# Decide which draw this recommendation is for (based on the last draw of the most recent date)
+# Decide which draw this recommendation is for (based on last draw logged)
 if not df.empty:
     df["draw_sort"] = df["draw"].map({"Midday": 0, "Evening": 1})
 
-    # Find most recent calendar date in the data
     latest_date = df["date"].max()
+    todays_draws = df[df["date"] == latest_date]
 
-    # Get the last draw logged on that date
-    latest_day = df[df["date"] == latest_date].sort_values("draw_sort").iloc[-1]
-
-    # Decide the next draw
-    if latest_day["draw"] == "Midday":
-        draw_type_for_rec = "Evening"
-    else:
+    if "Evening" in todays_draws["draw"].values:
+        # If Evening is already logged for today, next draw = tomorrow's Midday
         draw_type_for_rec = "Midday"
+        rec_date = latest_date + pd.Timedelta(days=1)
+    elif "Midday" in todays_draws["draw"].values:
+        # If only Midday is logged so far, next draw = today's Evening
+        draw_type_for_rec = "Evening"
+        rec_date = latest_date
+    else:
+        # If no draws logged for today yet, default to Midday
+        draw_type_for_rec = "Midday"
+        rec_date = latest_date
 else:
-    draw_type_for_rec = "Midday"  # default if no data yet
+    # No data at all yet
+    draw_type_for_rec = "Midday"
+    rec_date = datetime.now().date()
 
 
 st.subheader(f"🔥 Recommended Numbers for {draw_type_for_rec} Draw")
@@ -249,4 +255,5 @@ if not rec_df.empty:
         )
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
