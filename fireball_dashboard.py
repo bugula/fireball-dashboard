@@ -95,17 +95,17 @@ st.markdown(
 
 
 
-    # --- Log recommendation only once per draw ---
-    rec_data = rec_sheet.get_all_records()
-    today_str = str(datetime.now().date())
+# --- Log recommendation only once per draw ---
+rec_data = rec_sheet.get_all_records()
+today_str = str(datetime.now().date())
 
-    already_logged = any(
-        str(row["date"]) == today_str and str(row.get("draw")) == draw_type_for_rec
-        for row in rec_data
-    )
+already_logged = any(
+    str(row["date"]) == today_str and str(row.get("draw")) == draw_type_for_rec
+    for row in rec_data
+)
 
-    if not already_logged:
-        rec_sheet.append_row([today_str, draw_type_for_rec, ''.join(pick3), fire_rec])
+if not already_logged:
+    rec_sheet.append_row([today_str, draw_type_for_rec, ''.join(pick3), fire_rec])
 
 # --- Quick View: Last 14 Draws ---
 st.subheader("🕒 Last 14 Draws (Pick 3 + Fireball)")
@@ -278,6 +278,7 @@ if not rec_df.empty:
             range=[-0.5, 1.5]
         )
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
