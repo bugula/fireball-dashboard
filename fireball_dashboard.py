@@ -8,7 +8,7 @@ import os
 import json
 
 st.set_page_config(page_title="Fireball Dashboard", layout="wide")
-st.title("Illinois Pick 3 + Fireball Dashboard")
+st.title("Fireball Dashboard")
 
 # --- Google Sheets Setup ---
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -241,6 +241,7 @@ if not rec_df.empty:
             range=[-0.5, 1.5]
         )
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
