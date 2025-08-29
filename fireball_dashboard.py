@@ -228,7 +228,7 @@ if not df.empty:
     fig3.update_yaxes(fixedrange=True)
     st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
-# --- Recommendation History & Accuracy (Last 14) ---
+# --- Recommendation History & Accuracy (Last 14 completed draws) ---
 st.markdown("<br>", unsafe_allow_html=True)
 st.subheader("📊 Last 14 Fireball Recommendations vs Results")
 
@@ -244,16 +244,16 @@ if not rec_df.empty and not df.empty:
     df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
     df["draw"] = df["draw"].astype(str).str.strip().str.title()
 
-    # Take last 14 recs
-    rec_last14 = rec_df.sort_values(["date", "draw"], ascending=[False, False]).head(14)
-
-    # Join with actual fireballs
+    # Join recs with actual results
     merged = pd.merge(
-        rec_last14,
+        rec_df,
         df[["date", "draw", "fireball"]],
         on=["date", "draw"],
-        how="left"
+        how="inner"   # only keep rows where actual result exists
     )
+
+    # Only keep last 14 completed draws
+    merged = merged.sort_values(["date", "draw"], ascending=[False, False]).head(14)
 
     if not merged.empty:
         merged["hit"] = merged.apply(
@@ -269,9 +269,9 @@ if not rec_df.empty and not df.empty:
 
         # Hit rate
         hit_rate = (merged["hit"] == "✅").mean() * 100
-        st.write(f"Hit Rate (last 14): **{hit_rate:.1f}%**")
+        st.write(f"Hit Rate (last 14 completed): **{hit_rate:.1f}%**")
 
-        # Simple accuracy chart
+        # Accuracy chart
         chart_df = merged.sort_values(["date", "draw"])
         chart_df["Hit Value"] = chart_df["hit"].map({"✅": 1, "❌": 0})
         fig_acc = px.scatter(
@@ -280,7 +280,7 @@ if not rec_df.empty and not df.empty:
             y="Hit Value",
             color="hit",
             symbol="draw",
-            title="Hit/Miss Over Last 14 Recommendations",
+            title="Hit/Miss Over Last 14 Completed Recommendations",
             labels={"Hit Value": "Result", "date": "Date"},
             color_discrete_map={"✅": "green", "❌": "red"}
         )
@@ -288,6 +288,6 @@ if not rec_df.empty and not df.empty:
         st.plotly_chart(fig_acc, use_container_width=True,
                         config={"displayModeBar": False, "scrollZoom": False})
     else:
-        st.info("No matching recommendations with actual results yet.")
+        st.info("No completed recommendations to display yet.")
 else:
     st.info("Not enough data to display recommendation accuracy.")
