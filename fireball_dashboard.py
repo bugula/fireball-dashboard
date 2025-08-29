@@ -228,71 +228,66 @@ if not df.empty:
     fig3.update_yaxes(fixedrange=True)
     st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
-# --- Recommendation History & Accuracy ---
+# --- Recommendation History & Accuracy (Last 14) ---
+st.markdown("<br>", unsafe_allow_html=True)
+st.subheader("📊 Last 14 Fireball Recommendations vs Results")
+
 rec_df = pd.DataFrame(rec_sheet.get_all_records())
 
 if not rec_df.empty and not df.empty:
-    # Normalize column names
+    # Normalize
     rec_df.columns = rec_df.columns.str.strip().str.lower()
     df.columns = df.columns.str.strip().str.lower()
 
-    # Normalize date formats
-    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
     rec_df["date"] = pd.to_datetime(rec_df["date"], errors="coerce").dt.date
-
-    # Normalize draw labels (Midday / Evening)
-    df["draw"] = df["draw"].astype(str).str.strip().str.title()
     rec_df["draw"] = rec_df["draw"].astype(str).str.strip().str.title()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    df["draw"] = df["draw"].astype(str).str.strip().str.title()
 
-    # Format Pick 3 nicely with commas
-    if "recommended_pick3" in rec_df.columns:
-        rec_df["recommended_pick3"] = rec_df["recommended_pick3"].apply(
-            lambda x: ", ".join(list(str(x))) if pd.notna(x) else x
-        )
+    # Take last 14 recs
+    rec_last14 = rec_df.sort_values(["date", "draw"], ascending=[False, False]).head(14)
 
-    # Merge actual draws with recommendations
+    # Join with actual fireballs
     merged = pd.merge(
-        df,
-        rec_df,
-        how="inner",
-        on=["date", "draw"]
+        rec_last14,
+        df[["date", "draw", "fireball"]],
+        on=["date", "draw"],
+        how="left"
     )
 
     if not merged.empty:
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.subheader("📊 Recommendation Accuracy History")
-
-        # Add hit/miss column
         merged["hit"] = merged.apply(
             lambda r: "✅" if str(r["fireball"]) == str(r["recommended_fireball"]) else "❌",
             axis=1
         )
 
-        # Display history table
+        # Table display
         st.table(
-            merged[["date", "draw", "recommended_pick3", "recommended_fireball", "fireball", "hit"]]
-            .sort_values(["date", "draw"], ascending=[False, False])  # Evening above Midday
-            .head(20)
+            merged[["date", "draw", "recommended_fireball", "fireball", "hit"]]
+            .sort_values(["date", "draw"], ascending=[False, False])
         )
 
-        # Overall accuracy
+        # Hit rate
         hit_rate = (merged["hit"] == "✅").mean() * 100
-        st.write(f"Overall Fireball Hit Rate: **{hit_rate:.1f}%**")
+        st.write(f"Hit Rate (last 14): **{hit_rate:.1f}%**")
 
-        # Accuracy chart
-        chart_df = merged.sort_values(["date", "draw"]).tail(30)
+        # Simple accuracy chart
+        chart_df = merged.sort_values(["date", "draw"])
         chart_df["Hit Value"] = chart_df["hit"].map({"✅": 1, "❌": 0})
-
         fig_acc = px.scatter(
             chart_df,
             x="date",
             y="Hit Value",
             color="hit",
             symbol="draw",
-            title="Hit/Miss Over Time (Last 30 Draws)",
+            title="Hit/Miss Over Last 14 Recommendations",
             labels={"Hit Value": "Result", "date": "Date"},
             color_discrete_map={"✅": "green", "❌": "red"}
         )
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True,
                         config={"displayModeBar": False, "scrollZoom": False})
+    else:
+        st.info("No matching recommendations with actual results yet.")
+else:
+    st.info("Not enough data to display recommendation accuracy.")
