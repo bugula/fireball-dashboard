@@ -134,6 +134,44 @@ fig3 = px.imshow(
 )
 st.plotly_chart(fig3, use_container_width=True)
 
+# --- Streaks & Gaps (Draws Since Last Appearance) ---
+st.subheader("⏳ Fireball Streaks & Gaps")
+
+# Sort by date/draw to get chronological sequence
+df_sorted = df.sort_values(["date", "draw_sort"])
+
+# Track last seen index for each Fireball
+last_seen = {}
+gaps = {}
+
+for idx, row in df_sorted.iterrows():
+    fb = str(row["fireball"])
+    last_seen[fb] = idx  # update last appearance
+
+# Compute gap length = total draws - last seen index
+total_draws = len(df_sorted)
+for num in [str(i) for i in range(10)]:
+    if num in last_seen:
+        gaps[num] = total_draws - last_seen[num] - 1
+    else:
+        # If a number has never been seen, gap = total draws
+        gaps[num] = total_draws
+
+# Build DataFrame for visualization
+gaps_df = pd.DataFrame(list(gaps.items()), columns=["Fireball", "Draws Since Last Seen"])
+gaps_df = gaps_df.sort_values("Fireball")
+
+# Plot
+fig_gaps = px.bar(
+    gaps_df,
+    x="Fireball",
+    y="Draws Since Last Seen",
+    text="Draws Since Last Seen",
+    title="How Long Since Each Fireball Last Hit"
+)
+st.plotly_chart(fig_gaps, use_container_width=True)
+
+
 # --- Recommendation History & Accuracy ---
 rec_df = pd.DataFrame(rec_sheet.get_all_records())
 
@@ -192,3 +230,4 @@ if not rec_df.empty:
             range=[-0.5, 1.5]
         )
         st.plotly_chart(fig_acc, use_container_width=True)
+
