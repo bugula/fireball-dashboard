@@ -89,7 +89,7 @@ st.markdown(
     f"<div style='background-color:#006400; padding:15px; border-radius:10px; "
     f"text-align:center;'>"
     f"<div style='font-size:20px; font-weight:bold; color:white;'>"
-    f"Recommended: {pick3_html} + 🔥 {fireball_html}</div></div>",
+    f"Recommended: {pick3_html} + {fireball_html}</div></div>",
     unsafe_allow_html=True
 )
 
@@ -278,6 +278,7 @@ if not rec_df.empty:
             range=[-0.5, 1.5]
         )
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
