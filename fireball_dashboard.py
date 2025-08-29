@@ -72,7 +72,7 @@ else:
     draw_type_for_rec = "Midday"  # fallback if no data yet
 
 st.markdown("<br>", unsafe_allow_html=True)
-st.subheader(f"🔥 Recommended Numbers for {draw_type_for_rec} Draw")
+st.subheader(f"🔥 Recommended Numbers for {draw_type_for_rec}")
 recent_window = df[pd.to_datetime(df["date"]) > (pd.to_datetime(df["date"]).max() - pd.Timedelta(days=14))] if not df.empty else df
 
 # Fireball recommendation
@@ -128,7 +128,7 @@ gap_len = gaps[most_overdue]
 # Styled overdue highlight
 overdue_html = (
     f"<div style='font-size:16px; margin-top:10px;'>"
-    f"⏳ Most Overdue Fireball: "
+    f"⏳ Overdue: "
     f"<span style='display:inline-block; width:35px; height:35px; "
     f"border-radius:50%; background-color:gray; color:white; "
     f"text-align:center; line-height:35px; font-weight:bold; "
@@ -151,7 +151,7 @@ if not already_logged:
 
 # --- Quick View: Last 14 Draws ---
 st.markdown("<br>", unsafe_allow_html=True)
-st.subheader("🕒 Last 14 Draws (Pick 3 + Fireball)")
+st.subheader("🕒 Last 14 Draws")
 
 last14 = df.sort_values(["date", "draw_sort"], ascending=[False, False]).head(14)
 
@@ -259,6 +259,7 @@ if not rec_df.empty and not df.empty:
                              color_discrete_map={"✅": "green", "❌": "red"})
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
