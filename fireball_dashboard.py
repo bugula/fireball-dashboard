@@ -51,7 +51,7 @@ st.sidebar.header("➕ Add Latest Drawing")
 with st.sidebar.form("new_draw_form"):
     new_date = st.date_input("Draw Date")
     draw_type = st.selectbox("Draw Type", ["Midday", "Evening"])
-    new_fireball = st.number_input("Number 1", 0, 9, step=1)
+    new_fireball = st.number_input("Fireball", 0, 9, step=1)
     num1 = st.number_input("Number 1", 0, 9, step=1)
     num2 = st.number_input("Number 2", 0, 9, step=1)
     num3 = st.number_input("Number 3", 0, 9, step=1)
@@ -306,6 +306,7 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to display yet.")
 else:
     st.info("Not enough data to display recommendation accuracy.")
+
 
 
 
