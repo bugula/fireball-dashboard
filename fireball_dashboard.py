@@ -183,10 +183,10 @@ st.markdown(styled_last14_html, unsafe_allow_html=True)
 # --- Frequency in Last 14 ---
 if not df.empty:
     st.markdown("<br>", unsafe_allow_html=True)
-    st.subheader("📊 Fireball Frequency (Last 14 Draws)")
+    st.subheader("📊 Fireball Frequency")
     freq14 = last14["fireball"].value_counts().reindex([str(i) for i in range(10)], fill_value=0).reset_index()
     freq14.columns = ["Fireball", "Count"]
-    fig0 = px.bar(freq14, x="Fireball", y="Count", text="Count", title="Frequency in Last 14 Draws")
+    fig0 = px.bar(freq14, x="Fireball", y="Count", text="Count", title="Last 14 Draws")
     fig0.update_xaxes(type="category", categoryorder="array", categoryarray=[str(i) for i in range(10)])
     fig0.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
     st.plotly_chart(fig0, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
@@ -259,6 +259,7 @@ if not rec_df.empty and not df.empty:
                              color_discrete_map={"✅": "green", "❌": "red"})
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
