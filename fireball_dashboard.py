@@ -99,7 +99,7 @@ if fire_rec:
     pick3_html = "".join([style_number(n) for n in pick3])
     fireball_html = style_number(fire_rec, fireball=True)
     st.markdown(
-        f"<div style='background-color:#006400; padding:15px; border-radius:10px; "
+        f"<div style='background-color:#132e1a; padding:15px; border-radius:10px; "
         f"text-align:center;'>"
         f"<div style='font-size:20px; font-weight:bold; color:white;'>"
         f"Recommended: {pick3_html} + 🔥 {fireball_html}</div></div>",
@@ -210,3 +210,4 @@ if not rec_df.empty and not df.empty:
                              color_discrete_map={"✅": "green", "❌": "red"})
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
