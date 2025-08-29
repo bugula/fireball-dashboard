@@ -64,6 +64,9 @@ st.write("DEBUG - Last Draw Row:", last_draw)
 
 # --- Recommendation Engine ---
 # Decide which draw this recommendation is for (flip from the most recent logged draw)
+st.write("DEBUG - Columns in df:", df.columns.tolist())
+st.write("DEBUG - Sample rows:", df.head())
+
 if not df.empty:
     # Ensure draw_sort exists
     if "draw_sort" not in df.columns:
@@ -259,6 +262,7 @@ if not rec_df.empty:
         )
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
