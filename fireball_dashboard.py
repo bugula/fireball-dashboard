@@ -137,7 +137,8 @@ st.plotly_chart(fig3, use_container_width=True)
 # --- Recommendation History & Accuracy ---
 rec_df = pd.DataFrame(rec_sheet.get_all_records())
 
-if not rec_df.empty:
+# Only continue if the sheet has at least one *non-empty* recommendation row
+if not rec_df.empty and rec_df["recommended_fireball"].notna().any():
     st.subheader("📊 Recommendation Accuracy History")
 
     # Format Pick 3 recommendations with commas
@@ -171,7 +172,7 @@ if not rec_df.empty:
     st.write(f"Overall Fireball Hit Rate: **{hit_rate:.1f}%**")
 
     # --- Accuracy Chart ---
-    chart_df = merged.sort_values(["date", "draw"]).tail(30)  # last ~15 days (30 draws)
+    chart_df = merged.sort_values(["date", "draw"]).tail(30)
     chart_df["Hit Value"] = chart_df["hit"].map({"✅": 1, "❌": 0})
 
     fig_acc = px.scatter(
@@ -190,4 +191,4 @@ if not rec_df.empty:
         range=[-0.5, 1.5]
     )
     st.plotly_chart(fig_acc, use_container_width=True)
-# 🔒 If empty, show nothing at all
+# 🔒 If truly no usable data, show nothing at all
