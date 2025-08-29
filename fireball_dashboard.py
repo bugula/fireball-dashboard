@@ -20,14 +20,11 @@ def style_number(num, fireball=False):
                 f"text-align:center; line-height:35px; font-weight:bold; "
                 f"margin:2px; border:1px solid black;'>{num}</span>")
 
-
 st.set_page_config(page_title="Fireball Dashboard", layout="wide")
 st.title("Fireball Dashboard")
 
 # --- Google Sheets Setup ---
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-
-# Load creds from Streamlit Cloud Secrets
 creds = ServiceAccountCredentials.from_json_keyfile_dict(
     st.secrets["gcp_service_account"],
     scope
@@ -40,8 +37,14 @@ rec_sheet = client.open("fireball_recommendations").sheet1
 
 # Load draws as DataFrame
 df = pd.DataFrame(data_sheet.get_all_records())
-df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
-df["fireball"] = df["fireball"].astype(str)
+# Normalize columns and values
+df.columns = df.columns.str.strip().str.lower()
+if not df.empty:
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    df["draw"] = df["draw"].astype(str).str.strip().str.title()  # "Midday" / "Evening"
+    df["fireball"] = df["fireball"].astype(str)
+    # Ensure draw_sort exists BEFORE any sorting
+    df["draw_sort"] = df["draw"].map({"Midday": 0, "Evening": 1})
 
 # --- Add New Drawing ---
 st.sidebar.header("➕ Add Latest Drawing")
@@ -59,58 +62,42 @@ with st.sidebar.form("new_draw_form"):
         data_sheet.append_row(row)
         st.sidebar.success(f"✅ Added {draw_type} draw {num1}{num2}{num3} + Fireball {new_fireball}")
 
-last_draw = df.sort_values(["date", "draw_sort"]).iloc[-1]
-st.write("DEBUG - Last Draw Row:", last_draw)
-
-# --- DEBUG: Inspect DataFrame before Recommendation Engine ---
-st.write("DEBUG - Columns in df:", df.columns.tolist())
-st.write("DEBUG - First 5 rows of df:")
-st.write(df.head())
-
-
 # --- Recommendation Engine ---
 # Decide which draw this recommendation is for (flip from the most recent logged draw)
-
-# Decide which draw this recommendation is for (flip from the most recent logged draw)
 if not df.empty:
-    # Make sure draw_sort is always present
-    df["draw_sort"] = df["draw"].map({"Midday": 0, "Evening": 1})
-
-    # Get the most recent row (latest date + latest draw on that date)
-    df_sorted = df.sort_values(["date", "draw_sort"], ascending=[True, True])
-    last_draw = df_sorted.iloc[-1]
-
-    # Flip draw type
-    draw_type_for_rec = "Evening" if last_draw["draw"] == "Midday" else "Midday"
+    df_sorted = df.sort_values(["date", "draw_sort"], ascending=[True, True]).reset_index(drop=True)
+    last_draw_row = df_sorted.iloc[-1]
+    draw_type_for_rec = "Evening" if last_draw_row["draw"] == "Midday" else "Midday"
 else:
     draw_type_for_rec = "Midday"  # fallback if no data yet
 
-
-
-
-
 st.subheader(f"🔥 Recommended Numbers for {draw_type_for_rec} Draw")
-recent_window = df[pd.to_datetime(df["date"]) > (pd.to_datetime(df["date"]).max() - pd.Timedelta(days=14))]
+recent_window = df[pd.to_datetime(df["date"]) > (pd.to_datetime(df["date"]).max() - pd.Timedelta(days=14))] if not df.empty else df
 
 # Fireball recommendation
-recent_fire = recent_window["fireball"].value_counts(normalize=True)
-overall_fire = df["fireball"].value_counts(normalize=True)
-fire_combined = (recent_fire.add(overall_fire, fill_value=0)) / 2
-fire_rec = fire_combined.idxmax() if not fire_combined.empty else None
+if not df.empty and not recent_window.empty:
+    recent_fire = recent_window["fireball"].value_counts(normalize=True)
+    overall_fire = df["fireball"].value_counts(normalize=True)
+    fire_combined = (recent_fire.add(overall_fire, fill_value=0)) / 2
+    fire_rec = fire_combined.idxmax() if not fire_combined.empty else None
+else:
+    fire_rec = None
 
 # Pick 3 recommendation
 pick3 = []
-for col in ["num1", "num2", "num3"]:
-    recent_freq = recent_window[col].value_counts(normalize=True)
-    overall_freq = df[col].value_counts(normalize=True)
-    combined = (recent_freq.add(overall_freq, fill_value=0)) / 2
-    pick3.append(str(combined.idxmax()) if not combined.empty else "0")
+if not df.empty and not recent_window.empty:
+    for col in ["num1", "num2", "num3"]:
+        recent_freq = recent_window[col].value_counts(normalize=True)
+        overall_freq = df[col].value_counts(normalize=True)
+        combined = (recent_freq.add(overall_freq, fill_value=0)) / 2
+        pick3.append(str(combined.idxmax()) if not combined.empty else "0")
+else:
+    pick3 = ["0", "0", "0"]
 
 if fire_rec:
-    # Style pick 3 numbers as white circles with black text
+    # Styled recommendation banner
     pick3_html = "".join([style_number(n) for n in pick3])
     fireball_html = style_number(fire_rec, fireball=True)
-
     st.markdown(
         f"<div style='background-color:#006400; padding:15px; border-radius:10px; "
         f"text-align:center;'>"
@@ -119,118 +106,89 @@ if fire_rec:
         unsafe_allow_html=True
     )
 
-    # --- Log recommendation only once per draw ---
+    # Log recommendation only once per draw
     rec_data = rec_sheet.get_all_records()
     today_str = str(datetime.now().date())
-
     already_logged = any(
-        str(row["date"]) == today_str and str(row.get("draw")) == draw_type_for_rec
+        str(row.get("date")) == today_str and str(row.get("draw")) == draw_type_for_rec
         for row in rec_data
     )
-
     if not already_logged:
         rec_sheet.append_row([today_str, draw_type_for_rec, ''.join(pick3), fire_rec])
 
 # --- Quick View: Last 14 Draws ---
-st.subheader("🕒 Last 14 Draws (Pick 3 + Fireball)")
-df["draw_sort"] = df["draw"].map({"Midday": 0, "Evening": 1})
-last14 = df.sort_values(["date", "draw_sort"], ascending=[False, True]).head(14)
+if not df.empty:
+    st.subheader("🕒 Last 14 Draws (Pick 3 + Fireball)")
+    last14 = df.sort_values(["date", "draw_sort"], ascending=[False, True]).head(14)
 
-styled_last14 = last14.copy()
-styled_last14["Pick 3"] = styled_last14.apply(
-    lambda r: "".join([style_number(r["num1"]), style_number(r["num2"]), style_number(r["num3"])]),
-    axis=1
-)
-styled_last14["Fireball"] = styled_last14["fireball"].apply(lambda x: style_number(x, fireball=True))
+    styled_last14 = last14.copy()
+    styled_last14["Pick 3"] = styled_last14.apply(
+        lambda r: "".join([style_number(r["num1"]), style_number(r["num2"]), style_number(r["num3"])]),
+        axis=1
+    )
+    styled_last14["Fireball"] = styled_last14["fireball"].apply(lambda x: style_number(x, fireball=True))
 
-st.write(
-    styled_last14[["date", "draw", "Pick 3", "Fireball"]]
-    .to_html(escape=False, index=False),
-    unsafe_allow_html=True
-)
+    st.write(
+        styled_last14[["date", "draw", "Pick 3", "Fireball"]]
+        .to_html(escape=False, index=False),
+        unsafe_allow_html=True
+    )
 
 # --- Frequency in Last 14 ---
-st.subheader("📊 Fireball Frequency (Last 14 Draws)")
-
-freq14 = last14["fireball"].value_counts().reindex([str(i) for i in range(10)], fill_value=0).reset_index()
-freq14.columns = ["Fireball", "Count"]
-
-fig0 = px.bar(
-    freq14,
-    x="Fireball",
-    y="Count",
-    text="Count",
-    title="Frequency in Last 14 Draws"
-)
-fig0.update_xaxes(type="category", categoryorder="array", categoryarray=[str(i) for i in range(10)])
-fig0.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
-st.plotly_chart(fig0, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+if not df.empty:
+    st.subheader("📊 Fireball Frequency (Last 14 Draws)")
+    freq14 = last14["fireball"].value_counts().reindex([str(i) for i in range(10)], fill_value=0).reset_index()
+    freq14.columns = ["Fireball", "Count"]
+    fig0 = px.bar(freq14, x="Fireball", y="Count", text="Count", title="Frequency in Last 14 Draws")
+    fig0.update_xaxes(type="category", categoryorder="array", categoryarray=[str(i) for i in range(10)])
+    fig0.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+    st.plotly_chart(fig0, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
 # --- Streaks & Gaps ---
-st.subheader("⏳ Fireball Streaks & Gaps")
-chron = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
-chron["pos"] = chron.index
-last_pos = chron.groupby("fireball")["pos"].max()
-
-digits = [str(i) for i in range(10)]
-N = len(chron)
-gaps = []
-for d in digits:
-    if d in last_pos.index:
-        gap = (N - 1) - int(last_pos.loc[d])
-    else:
-        gap = N
-    gaps.append({"Fireball": d, "Draws Since Last Seen": gap})
-
-gaps_df = pd.DataFrame(gaps)
-
-fig_gaps = px.bar(
-    gaps_df,
-    x="Fireball",
-    y="Draws Since Last Seen",
-    text="Draws Since Last Seen",
-    title="How Long Since Each Fireball Last Hit"
-)
-fig_gaps.update_xaxes(type="category", categoryorder="array", categoryarray=digits)
-fig_gaps.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
-st.plotly_chart(fig_gaps, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+if not df.empty:
+    st.subheader("⏳ Fireball Streaks & Gaps")
+    chron = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
+    chron["pos"] = chron.index
+    last_pos = chron.groupby("fireball")["pos"].max()
+    digits = [str(i) for i in range(10)]
+    N = len(chron)
+    gaps = []
+    for d in digits:
+        gap = (N - 1) - int(last_pos.loc[d]) if d in last_pos.index else N
+        gaps.append({"Fireball": d, "Draws Since Last Seen": gap})
+    gaps_df = pd.DataFrame(gaps)
+    fig_gaps = px.bar(gaps_df, x="Fireball", y="Draws Since Last Seen", text="Draws Since Last Seen",
+                      title="How Long Since Each Fireball Last Hit")
+    fig_gaps.update_xaxes(type="category", categoryorder="array", categoryarray=digits)
+    fig_gaps.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+    st.plotly_chart(fig_gaps, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
 # --- Heatmap ---
-st.subheader("Fireball by Weekday Heatmap")
-weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-df["weekday"] = pd.to_datetime(df["date"]).dt.day_name()
-heatmap_data = df.groupby(["weekday", "fireball"]).size().reset_index(name="count")
-fireball_order = [str(i) for i in range(10)]
-pivot = heatmap_data.pivot(index="weekday", columns="fireball", values="count") \
-    .reindex(weekday_order).fillna(0)[fireball_order]
-
-fig3 = px.imshow(
-    pivot,
-    labels=dict(x="Fireball", y="Weekday", color="Count"),
-    x=fireball_order, y=weekday_order,
-    aspect="auto", color_continuous_scale="Viridis",
-    title="Fireball Frequency by Weekday"
-)
-fig3.update_xaxes(
-    tickmode="array",
-    tickvals=list(range(10)),
-    ticktext=[str(i) for i in range(10)],
-    fixedrange=True
-)
-fig3.update_yaxes(fixedrange=True)
-st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+if not df.empty:
+    st.subheader("Fireball by Weekday Heatmap")
+    weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    df["weekday"] = pd.to_datetime(df["date"]).dt.day_name()
+    heatmap_data = df.groupby(["weekday", "fireball"]).size().reset_index(name="count")
+    fireball_order = [str(i) for i in range(10)]
+    pivot = heatmap_data.pivot(index="weekday", columns="fireball", values="count") \
+        .reindex(weekday_order).fillna(0)[fireball_order]
+    fig3 = px.imshow(pivot, labels=dict(x="Fireball", y="Weekday", color="Count"),
+                     x=fireball_order, y=weekday_order,
+                     aspect="auto", color_continuous_scale="Viridis",
+                     title="Fireball Frequency by Weekday")
+    fig3.update_xaxes(tickmode="array", tickvals=list(range(10)), ticktext=[str(i) for i in range(10)], fixedrange=True)
+    fig3.update_yaxes(fixedrange=True)
+    st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
 # --- Recommendation History & Accuracy ---
 rec_df = pd.DataFrame(rec_sheet.get_all_records())
-
-if not rec_df.empty:
+if not rec_df.empty and not df.empty:
+    rec_df.columns = rec_df.columns.str.strip().str.lower()
     rec_df["date"] = pd.to_datetime(rec_df["date"], errors="coerce").dt.date
     rec_df["recommended_pick3"] = rec_df["recommended_pick3"].apply(
         lambda x: ", ".join(list(str(x))) if pd.notna(x) else x
     )
-
     merged = pd.merge(df, rec_df, how="inner", left_on=["date", "draw"], right_on=["date", "draw"])
-
     if not merged.empty:
         st.subheader("📊 Recommendation Accuracy History")
         merged["hit"] = merged.apply(
@@ -244,27 +202,11 @@ if not rec_df.empty:
         )
         hit_rate = (merged["hit"] == "✅").mean() * 100
         st.write(f"Overall Fireball Hit Rate: **{hit_rate:.1f}%**")
-
         chart_df = merged.sort_values(["date", "draw"]).tail(30)
         chart_df["Hit Value"] = chart_df["hit"].map({"✅": 1, "❌": 0})
-        fig_acc = px.scatter(
-            chart_df,
-            x="date",
-            y="Hit Value",
-            color="hit",
-            symbol="draw",
-            title="Hit/Miss Over Time (Last 30 Draws)",
-            labels={"Hit Value": "Result", "date": "Date"},
-            color_discrete_map={"✅": "green", "❌": "red"}
-        )
+        fig_acc = px.scatter(chart_df, x="date", y="Hit Value", color="hit", symbol="draw",
+                             title="Hit/Miss Over Time (Last 30 Draws)",
+                             labels={"Hit Value": "Result", "date": "Date"},
+                             color_discrete_map={"✅": "green", "❌": "red"})
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
-
-
-
-
-
-
-
-
-
