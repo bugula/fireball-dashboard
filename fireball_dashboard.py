@@ -71,6 +71,7 @@ if not df.empty:
 else:
     draw_type_for_rec = "Midday"  # fallback if no data yet
 
+st.markdown("<br>", unsafe_allow_html=True)
 st.subheader(f"🔥 Recommended Numbers for {draw_type_for_rec} Draw")
 recent_window = df[pd.to_datetime(df["date"]) > (pd.to_datetime(df["date"]).max() - pd.Timedelta(days=14))] if not df.empty else df
 
@@ -118,6 +119,7 @@ if fire_rec:
 
 # --- Quick View: Last 14 Draws ---
 if not df.empty:
+    st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("🕒 Last 14 Draws (Pick 3 + Fireball)")
     last14 = df.sort_values(["date", "draw_sort"], ascending=[False, True]).head(14)
 
@@ -136,6 +138,7 @@ if not df.empty:
 
 # --- Frequency in Last 14 ---
 if not df.empty:
+    st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("📊 Fireball Frequency (Last 14 Draws)")
     freq14 = last14["fireball"].value_counts().reindex([str(i) for i in range(10)], fill_value=0).reset_index()
     freq14.columns = ["Fireball", "Count"]
@@ -165,6 +168,7 @@ if not df.empty:
 
 # --- Heatmap ---
 if not df.empty:
+    st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("Fireball by Weekday Heatmap")
     weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     df["weekday"] = pd.to_datetime(df["date"]).dt.day_name()
@@ -190,6 +194,7 @@ if not rec_df.empty and not df.empty:
     )
     merged = pd.merge(df, rec_df, how="inner", left_on=["date", "draw"], right_on=["date", "draw"])
     if not merged.empty:
+        st.markdown("<br>", unsafe_allow_html=True)
         st.subheader("📊 Recommendation Accuracy History")
         merged["hit"] = merged.apply(
             lambda r: "✅" if str(r["fireball"]) == str(r["recommended_fireball"]) else "❌",
@@ -210,4 +215,5 @@ if not rec_df.empty and not df.empty:
                              color_discrete_map={"✅": "green", "❌": "red"})
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
