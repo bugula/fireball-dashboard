@@ -105,7 +105,10 @@ fig0 = px.bar(
     title="Frequency in Last 14 Draws"
 )
 fig0.update_xaxes(type="category", categoryorder="array", categoryarray=[str(i) for i in range(10)])
-
+fig0.update_layout(
+    xaxis=dict(fixedrange=True),
+    yaxis=dict(fixedrange=True)
+)
 st.plotly_chart(fig0, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
 # --- Streaks & Gaps (Draws Since Last Appearance) ---
@@ -144,6 +147,10 @@ fig_gaps = px.bar(
     title="How Long Since Each Fireball Last Hit"
 )
 fig_gaps.update_xaxes(type="category", categoryorder="array", categoryarray=digits)
+fig_gaps.update_layout(
+    xaxis=dict(fixedrange=True),
+    yaxis=dict(fixedrange=True)
+)
 st.plotly_chart(fig_gaps, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
 # --- Heatmap by Weekday ---
@@ -222,3 +229,4 @@ if not rec_df.empty:
             range=[-0.5, 1.5]
         )
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
