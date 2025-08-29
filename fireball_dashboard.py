@@ -107,6 +107,38 @@ if fire_rec:
         unsafe_allow_html=True
     )
 
+# --- Highlight Most Overdue Fireball ---
+# Use same logic from streaks & gaps, but just pick the max gap
+chron = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
+chron["pos"] = chron.index
+last_pos = chron.groupby("fireball")["pos"].max()
+
+N = len(chron)
+gaps = {}
+for d in [str(i) for i in range(10)]:
+    if d in last_pos.index:
+        gaps[d] = (N - 1) - int(last_pos.loc[d])
+    else:
+        gaps[d] = N  # never seen
+
+# Find most overdue fireball
+most_overdue = max(gaps, key=gaps.get)
+gap_len = gaps[most_overdue]
+
+# Styled overdue highlight
+overdue_html = (
+    f"<div style='font-size:16px; margin-top:10px;'>"
+    f"⏳ Most Overdue Fireball: "
+    f"<span style='display:inline-block; width:35px; height:35px; "
+    f"border-radius:50%; background-color:gray; color:white; "
+    f"text-align:center; line-height:35px; font-weight:bold; "
+    f"margin-left:5px;'>{most_overdue}</span> "
+    f"({gap_len} draws since last hit)</div>"
+)
+
+st.markdown(overdue_html, unsafe_allow_html=True)
+
+
     # Log recommendation only once per draw
     rec_data = rec_sheet.get_all_records()
     today_str = str(datetime.now().date())
@@ -227,6 +259,7 @@ if not rec_df.empty and not df.empty:
                              color_discrete_map={"✅": "green", "❌": "red"})
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
