@@ -130,11 +130,19 @@ styled_last14["Pick 3"] = styled_last14.apply(
 )
 styled_last14["Fireball"] = styled_last14["fireball"].apply(lambda x: style_number(x, fireball=True))
 
-# Render table without headers, full width
+# Convert to HTML, remove headers
 styled_last14_html = styled_last14[["date", "draw", "Pick 3", "Fireball"]].to_html(
     escape=False, index=False, header=False
 )
-st.markdown(f"<div style='width:100%;'>{styled_last14_html}</div>", unsafe_allow_html=True)
+
+# Inject CSS to force full-width table
+styled_last14_html = styled_last14_html.replace(
+    "<table border=\"1\" class=\"dataframe\">",
+    "<table style='width:100%; border-collapse:collapse; font-size:16px;'>"
+)
+
+st.markdown(styled_last14_html, unsafe_allow_html=True)
+
 
 
 # --- Frequency in Last 14 ---
@@ -216,6 +224,7 @@ if not rec_df.empty and not df.empty:
                              color_discrete_map={"✅": "green", "❌": "red"})
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
