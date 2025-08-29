@@ -60,16 +60,24 @@ with st.sidebar.form("new_draw_form"):
         st.sidebar.success(f"✅ Added {draw_type} draw {num1}{num2}{num3} + Fireball {new_fireball}")
 
 # --- Recommendation Engine ---
-# Decide which draw this recommendation is for (based on last logged draw)
+# Decide which draw this recommendation is for (based on the last draw of the most recent date)
 if not df.empty:
     df["draw_sort"] = df["draw"].map({"Midday": 0, "Evening": 1})
-    last_draw = df.sort_values(["date", "draw_sort"]).iloc[-1]
-    if last_draw["draw"] == "Midday":
+
+    # Find most recent calendar date in the data
+    latest_date = df["date"].max()
+
+    # Get the last draw logged on that date
+    latest_day = df[df["date"] == latest_date].sort_values("draw_sort").iloc[-1]
+
+    # Decide the next draw
+    if latest_day["draw"] == "Midday":
         draw_type_for_rec = "Evening"
     else:
         draw_type_for_rec = "Midday"
 else:
     draw_type_for_rec = "Midday"  # default if no data yet
+
 
 st.subheader(f"🔥 Recommended Numbers for {draw_type_for_rec} Draw")
 recent_window = df[pd.to_datetime(df["date"]) > (pd.to_datetime(df["date"]).max() - pd.Timedelta(days=14))]
@@ -241,3 +249,4 @@ if not rec_df.empty:
         )
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
