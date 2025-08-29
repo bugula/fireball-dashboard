@@ -261,6 +261,15 @@ if not rec_df.empty and not df.empty:
             axis=1
         )
 
+        # Hit rate vs baseline
+        hit_rate = (merged["hit"] == "✅").mean() * 100
+        performance_vs_baseline = hit_rate - 10
+        perf_str = f"+{performance_vs_baseline:.1f}%" if performance_vs_baseline >= 0 else f"{performance_vs_baseline:.1f}%"
+
+        st.write(f"Hit Rate (last 14 completed): **{hit_rate:.1f}%** "
+                 f"(vs baseline 10% → {perf_str})")
+
+        
         # Table display
         # Convert to styled HTML (no index)
         history_html = merged[["date", "draw", "recommended_fireball", "fireball", "hit"]] \
@@ -306,6 +315,7 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to display yet.")
 else:
     st.info("Not enough data to display recommendation accuracy.")
+
 
 
 
