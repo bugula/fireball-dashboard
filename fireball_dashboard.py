@@ -236,18 +236,26 @@ if not rec_df.empty and not df.empty:
     rec_df.columns = rec_df.columns.str.strip().str.lower()
     df.columns = df.columns.str.strip().str.lower()
 
-    # Format dates and Pick 3
+    # Normalize date formats
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
     rec_df["date"] = pd.to_datetime(rec_df["date"], errors="coerce").dt.date
-    rec_df["recommended_pick3"] = rec_df["recommended_pick3"].apply(
-        lambda x: ", ".join(list(str(x))) if pd.notna(x) else x
-    )
+
+    # Normalize draw labels (Midday / Evening)
+    df["draw"] = df["draw"].astype(str).str.strip().str.title()
+    rec_df["draw"] = rec_df["draw"].astype(str).str.strip().str.title()
+
+    # Format Pick 3 nicely with commas
+    if "recommended_pick3" in rec_df.columns:
+        rec_df["recommended_pick3"] = rec_df["recommended_pick3"].apply(
+            lambda x: ", ".join(list(str(x))) if pd.notna(x) else x
+        )
 
     # Merge actual draws with recommendations
     merged = pd.merge(
         df,
         rec_df,
         how="inner",
-        on=["date", "draw"]  # safe now because both are lowercase
+        on=["date", "draw"]
     )
 
     if not merged.empty:
