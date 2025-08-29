@@ -108,32 +108,6 @@ fig0.update_xaxes(type="category", categoryorder="array", categoryarray=[str(i) 
 
 st.plotly_chart(fig0, use_container_width=True)
 
-
-# --- All Time Frequency ---
-st.subheader("Fireball Frequency (All Time)")
-freq = df["fireball"].value_counts().reindex([str(i) for i in range(10)], fill_value=0).reset_index()
-freq.columns = ["Fireball", "Count"]
-fig1 = px.bar(freq, x="Fireball", y="Count", text="Count", title="Fireball Frequency")
-fig1.update_xaxes(type="category", categoryorder="array", categoryarray=[str(i) for i in range(10)])
-st.plotly_chart(fig1, use_container_width=True)
-
-# --- Heatmap by Weekday ---
-st.subheader("Fireball by Weekday Heatmap")
-weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-df["weekday"] = pd.to_datetime(df["date"]).dt.day_name()
-heatmap_data = df.groupby(["weekday", "fireball"]).size().reset_index(name="count")
-fireball_order = [str(i) for i in range(10)]
-pivot = heatmap_data.pivot(index="weekday", columns="fireball", values="count") \
-    .reindex(weekday_order).fillna(0)[fireball_order]
-fig3 = px.imshow(
-    pivot,
-    labels=dict(x="Fireball", y="Weekday", color="Count"),
-    x=fireball_order, y=weekday_order,
-    aspect="auto", color_continuous_scale="Viridis",
-    title="Fireball Frequency by Weekday"
-)
-st.plotly_chart(fig3, use_container_width=True)
-
 # --- Streaks & Gaps (Draws Since Last Appearance) ---
 st.subheader("⏳ Fireball Streaks & Gaps")
 
@@ -172,6 +146,22 @@ fig_gaps = px.bar(
 fig_gaps.update_xaxes(type="category", categoryorder="array", categoryarray=digits)
 st.plotly_chart(fig_gaps, use_container_width=True)
 
+# --- Heatmap by Weekday ---
+st.subheader("Fireball by Weekday Heatmap")
+weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+df["weekday"] = pd.to_datetime(df["date"]).dt.day_name()
+heatmap_data = df.groupby(["weekday", "fireball"]).size().reset_index(name="count")
+fireball_order = [str(i) for i in range(10)]
+pivot = heatmap_data.pivot(index="weekday", columns="fireball", values="count") \
+    .reindex(weekday_order).fillna(0)[fireball_order]
+fig3 = px.imshow(
+    pivot,
+    labels=dict(x="Fireball", y="Weekday", color="Count"),
+    x=fireball_order, y=weekday_order,
+    aspect="auto", color_continuous_scale="Viridis",
+    title="Fireball Frequency by Weekday"
+)
+st.plotly_chart(fig3, use_container_width=True)
 
 
 # --- Recommendation History & Accuracy ---
@@ -232,5 +222,6 @@ if not rec_df.empty:
             range=[-0.5, 1.5]
         )
         st.plotly_chart(fig_acc, use_container_width=True)
+
 
 
