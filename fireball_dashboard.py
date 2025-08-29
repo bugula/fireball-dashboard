@@ -139,12 +139,12 @@ overdue_html = (
 st.markdown(overdue_html, unsafe_allow_html=True)
 
 
-    # Log recommendation only once per draw
-    rec_data = rec_sheet.get_all_records()
-    today_str = str(datetime.now().date())
-    already_logged = any(
-        str(row.get("date")) == today_str and str(row.get("draw")) == draw_type_for_rec
-        for row in rec_data
+# Log recommendation only once per draw
+rec_data = rec_sheet.get_all_records()
+today_str = str(datetime.now().date())
+already_logged = any(
+    str(row.get("date")) == today_str and str(row.get("draw")) == draw_type_for_rec
+    for row in rec_data
     )
     if not already_logged:
         rec_sheet.append_row([today_str, draw_type_for_rec, ''.join(pick3), fire_rec])
@@ -259,6 +259,7 @@ if not rec_df.empty and not df.empty:
                              color_discrete_map={"✅": "green", "❌": "red"})
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
