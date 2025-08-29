@@ -290,11 +290,6 @@ if not rec_df.empty and not df.empty:
         st.markdown(history_html, unsafe_allow_html=True)
 
 
-
-        # Hit rate
-        hit_rate = (merged["hit"] == "✅").mean() * 100
-        st.write(f"Hit Rate (last 14 completed): **{hit_rate:.1f}%**")
-
         # Accuracy chart
         chart_df = merged.sort_values(["date", "draw"])
         chart_df["Hit Value"] = chart_df["hit"].map({"✅": 1, "❌": 0})
@@ -315,6 +310,7 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to display yet.")
 else:
     st.info("Not enough data to display recommendation accuracy.")
+
 
 
 
