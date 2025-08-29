@@ -59,6 +59,9 @@ with st.sidebar.form("new_draw_form"):
         data_sheet.append_row(row)
         st.sidebar.success(f"✅ Added {draw_type} draw {num1}{num2}{num3} + Fireball {new_fireball}")
 
+last_draw = df.sort_values(["date", "draw_sort"]).iloc[-1]
+st.write("DEBUG - Last Draw Row:", last_draw)
+
 # --- Recommendation Engine ---
 # Decide which draw this recommendation is for (opposite of the most recent one)
 if not df.empty:
@@ -247,6 +250,7 @@ if not rec_df.empty:
         )
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
