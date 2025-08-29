@@ -137,17 +137,13 @@ st.plotly_chart(fig3, use_container_width=True)
 # --- Recommendation History & Accuracy ---
 rec_df = pd.DataFrame(rec_sheet.get_all_records())
 
-# Only continue if the sheet has at least one *non-empty* recommendation row
-if not rec_df.empty and rec_df["recommended_fireball"].notna().any():
-    st.subheader("📊 Recommendation Accuracy History")
-
-    # Format Pick 3 recommendations with commas
+if not rec_df.empty:
     rec_df["date"] = pd.to_datetime(rec_df["date"], errors="coerce").dt.date
     rec_df["recommended_pick3"] = rec_df["recommended_pick3"].apply(
         lambda x: ", ".join(list(str(x))) if pd.notna(x) else x
     )
 
-    # Merge actual draws with recommendations
+    # Merge with actual draws
     merged = pd.merge(
         df,
         rec_df,
@@ -155,40 +151,44 @@ if not rec_df.empty and rec_df["recommended_fireball"].notna().any():
         left_on=["date", "draw"],
         right_on=["date", "draw"]
     )
-    merged["hit"] = merged.apply(
-        lambda r: "✅" if str(r["fireball"]) == str(r["recommended_fireball"]) else "❌",
-        axis=1
-    )
 
-    # Show history table
-    st.table(
-        merged[["date", "draw", "recommended_pick3", "recommended_fireball", "fireball", "hit"]]
-        .sort_values(["date", "draw"], ascending=[False, True])
-        .head(20)
-    )
+    # Only show section if we have at least one comparison
+    if not merged.empty:
+        st.subheader("📊 Recommendation Accuracy History")
 
-    # Show running accuracy %
-    hit_rate = (merged["hit"] == "✅").mean() * 100
-    st.write(f"Overall Fireball Hit Rate: **{hit_rate:.1f}%**")
+        merged["hit"] = merged.apply(
+            lambda r: "✅" if str(r["fireball"]) == str(r["recommended_fireball"]) else "❌",
+            axis=1
+        )
 
-    # --- Accuracy Chart ---
-    chart_df = merged.sort_values(["date", "draw"]).tail(30)
-    chart_df["Hit Value"] = chart_df["hit"].map({"✅": 1, "❌": 0})
+        # Show history table
+        st.table(
+            merged[["date", "draw", "recommended_pick3", "recommended_fireball", "fireball", "hit"]]
+            .sort_values(["date", "draw"], ascending=[False, True])
+            .head(20)
+        )
 
-    fig_acc = px.scatter(
-        chart_df,
-        x="date",
-        y="Hit Value",
-        color="hit",
-        symbol="draw",
-        title="Hit/Miss Over Time (Last 30 Draws)",
-        labels={"Hit Value": "Result", "date": "Date"},
-        color_discrete_map={"✅": "green", "❌": "red"}
-    )
-    fig_acc.update_yaxes(
-        tickvals=[0, 1],
-        ticktext=["Miss", "Hit"],
-        range=[-0.5, 1.5]
-    )
-    st.plotly_chart(fig_acc, use_container_width=True)
-# 🔒 If truly no usable data, show nothing at all
+        # Show running accuracy %
+        hit_rate = (merged["hit"] == "✅").mean() * 100
+        st.write(f"Overall Fireball Hit Rate: **{hit_rate:.1f}%**")
+
+        # --- Accuracy Chart ---
+        chart_df = merged.sort_values(["date", "draw"]).tail(30)
+        chart_df["Hit Value"] = chart_df["hit"].map({"✅": 1, "❌": 0})
+
+        fig_acc = px.scatter(
+            chart_df,
+            x="date",
+            y="Hit Value",
+            color="hit",
+            symbol="draw",
+            title="Hit/Miss Over Time (Last 30 Draws)",
+            labels={"Hit Value": "Result", "date": "Date"},
+            color_discrete_map={"✅": "green", "❌": "red"}
+        )
+        fig_acc.update_yaxes(
+            tickvals=[0, 1],
+            ticktext=["Miss", "Hit"],
+            range=[-0.5, 1.5]
+        )
+        st.plotly_chart(fig_acc, use_container_width=True)
