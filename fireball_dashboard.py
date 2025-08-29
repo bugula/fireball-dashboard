@@ -153,7 +153,7 @@ if not already_logged:
 st.markdown("<br>", unsafe_allow_html=True)
 st.subheader("🕒 Last 14 Draws (Pick 3 + Fireball)")
 
-last14 = df.sort_values(["date", "draw_sort"], ascending=[False, True]).head(14)
+last14 = df.sort_values(["date", "draw_sort"], ascending=[False, False]).head(14)
 
 styled_last14 = last14.copy()
 styled_last14["Pick 3"] = styled_last14.apply(
@@ -259,6 +259,7 @@ if not rec_df.empty and not df.empty:
                              color_discrete_map={"✅": "green", "❌": "red"})
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
