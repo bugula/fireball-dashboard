@@ -118,7 +118,7 @@ if fire_rec:
         rec_sheet.append_row([today_str, draw_type_for_rec, ''.join(pick3), fire_rec])
 
 # --- Quick View: Last 14 Draws ---
-st.markdown("<br>", unsafe_allow_html=True)  # add space above
+st.markdown("<br>", unsafe_allow_html=True)
 st.subheader("🕒 Last 14 Draws (Pick 3 + Fireball)")
 
 last14 = df.sort_values(["date", "draw_sort"], ascending=[False, True]).head(14)
@@ -130,19 +130,22 @@ styled_last14["Pick 3"] = styled_last14.apply(
 )
 styled_last14["Fireball"] = styled_last14["fireball"].apply(lambda x: style_number(x, fireball=True))
 
-# Convert to HTML, remove headers
+# Convert to HTML without headers
 styled_last14_html = styled_last14[["date", "draw", "Pick 3", "Fireball"]].to_html(
     escape=False, index=False, header=False
 )
 
-# Inject CSS to force full-width table
+# Inject CSS: full width, centered text
 styled_last14_html = styled_last14_html.replace(
     "<table border=\"1\" class=\"dataframe\">",
-    "<table style='width:100%; border-collapse:collapse; font-size:16px;'>"
+    "<table style='width:100%; border-collapse:collapse; font-size:16px; text-align:center;'>"
+).replace(
+    "<td>", "<td style='text-align:center; vertical-align:middle;'>"
+).replace(
+    "<th>", "<th style='text-align:center; vertical-align:middle;'>"
 )
 
 st.markdown(styled_last14_html, unsafe_allow_html=True)
-
 
 
 # --- Frequency in Last 14 ---
@@ -224,6 +227,7 @@ if not rec_df.empty and not df.empty:
                              color_discrete_map={"✅": "green", "❌": "red"})
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
