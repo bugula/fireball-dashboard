@@ -135,16 +135,25 @@ fig3 = px.imshow(
 st.plotly_chart(fig3, use_container_width=True)
 
 # --- Recommendation History & Accuracy ---
-
-# Load recommendations
 rec_df = pd.DataFrame(rec_sheet.get_all_records())
 
 if not rec_df.empty:
     st.subheader("📊 Recommendation Accuracy History")
+
+    # Format Pick 3 recommendations with commas
     rec_df["date"] = pd.to_datetime(rec_df["date"], errors="coerce").dt.date
+    rec_df["recommended_pick3"] = rec_df["recommended_pick3"].apply(
+        lambda x: ", ".join(list(str(x))) if pd.notna(x) else x
+    )
 
     # Merge actual draws with recommendations
-    merged = pd.merge(df, rec_df, how="inner", left_on=["date", "draw"], right_on=["date", "draw"])
+    merged = pd.merge(
+        df,
+        rec_df,
+        how="inner",
+        left_on=["date", "draw"],
+        right_on=["date", "draw"]
+    )
     merged["hit"] = merged.apply(
         lambda r: "✅" if str(r["fireball"]) == str(r["recommended_fireball"]) else "❌",
         axis=1
@@ -181,10 +190,4 @@ if not rec_df.empty:
         range=[-0.5, 1.5]
     )
     st.plotly_chart(fig_acc, use_container_width=True)
-
-else:
-    st.info("No recommendations logged yet.")
-
-
-
-
+# 🔒 If empty, show nothing at all
