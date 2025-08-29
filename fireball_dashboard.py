@@ -106,7 +106,7 @@ fig0 = px.bar(
 )
 fig0.update_xaxes(type="category", categoryorder="array", categoryarray=[str(i) for i in range(10)])
 
-st.plotly_chart(fig0, use_container_width=True)
+st.plotly_chart(fig0, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
 # --- Streaks & Gaps (Draws Since Last Appearance) ---
 st.subheader("⏳ Fireball Streaks & Gaps")
@@ -144,7 +144,7 @@ fig_gaps = px.bar(
     title="How Long Since Each Fireball Last Hit"
 )
 fig_gaps.update_xaxes(type="category", categoryorder="array", categoryarray=digits)
-st.plotly_chart(fig_gaps, use_container_width=True)
+st.plotly_chart(fig_gaps, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
 # --- Heatmap by Weekday ---
 st.subheader("Fireball by Weekday Heatmap")
@@ -161,7 +161,7 @@ fig3 = px.imshow(
     aspect="auto", color_continuous_scale="Viridis",
     title="Fireball Frequency by Weekday"
 )
-st.plotly_chart(fig3, use_container_width=True)
+st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
 
 # --- Recommendation History & Accuracy ---
@@ -221,7 +221,4 @@ if not rec_df.empty:
             ticktext=["Miss", "Hit"],
             range=[-0.5, 1.5]
         )
-        st.plotly_chart(fig_acc, use_container_width=True)
-
-
-
+        st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
