@@ -118,25 +118,23 @@ if fire_rec:
         rec_sheet.append_row([today_str, draw_type_for_rec, ''.join(pick3), fire_rec])
 
 # --- Quick View: Last 14 Draws ---
-if not df.empty:
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.subheader("🕒 Last 14 Draws (Pick 3 + Fireball)")
-    last14 = df.sort_values(["date", "draw_sort"], ascending=[False, True]).head(14)
+st.markdown("<br>", unsafe_allow_html=True)  # add space above
+st.subheader("🕒 Last 14 Draws (Pick 3 + Fireball)")
 
-    styled_last14 = last14.copy()
-    styled_last14["Pick 3"] = styled_last14.apply(
-        lambda r: "".join([style_number(r["num1"]), style_number(r["num2"]), style_number(r["num3"])]),
-        axis=1
-    )
-    styled_last14["Fireball"] = styled_last14["fireball"].apply(lambda x: style_number(x, fireball=True))
+last14 = df.sort_values(["date", "draw_sort"], ascending=[False, True]).head(14)
 
-    st.markdown(
-        "<div style='width:100%;'>"
-        + styled_last14[["date", "draw", "Pick 3", "Fireball"]]
-            .to_html(escape=False, index=False)
-        + "</div>",
-        unsafe_allow_html=True
-    )
+styled_last14 = last14.copy()
+styled_last14["Pick 3"] = styled_last14.apply(
+    lambda r: "".join([style_number(r["num1"]), style_number(r["num2"]), style_number(r["num3"])]),
+    axis=1
+)
+styled_last14["Fireball"] = styled_last14["fireball"].apply(lambda x: style_number(x, fireball=True))
+
+# Render table without headers, full width
+styled_last14_html = styled_last14[["date", "draw", "Pick 3", "Fireball"]].to_html(
+    escape=False, index=False, header=False
+)
+st.markdown(f"<div style='width:100%;'>{styled_last14_html}</div>", unsafe_allow_html=True)
 
 
 # --- Frequency in Last 14 ---
@@ -218,6 +216,7 @@ if not rec_df.empty and not df.empty:
                              color_discrete_map={"✅": "green", "❌": "red"})
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
