@@ -68,7 +68,7 @@ for col in ["num1", "num2", "num3"]:
 
 if fire_rec:
     pick3_display = ", ".join(pick3)
-    st.success(f"Recommended: **{pick3_display} + 🔥 Fireball {fire_rec}**")
+    st.success(f"Pick 3: **{pick3_display} & 🔥 Fireball {fire_rec}**")
 
 
     # --- Log recommendation only once per draw ---
@@ -241,6 +241,7 @@ if not rec_df.empty:
             range=[-0.5, 1.5]
         )
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
