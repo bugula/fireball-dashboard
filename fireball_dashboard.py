@@ -230,54 +230,61 @@ if not df.empty:
 
 # --- Recommendation History & Accuracy ---
 rec_df = pd.DataFrame(rec_sheet.get_all_records())
+
 if not rec_df.empty and not df.empty:
+    # Normalize column names
     rec_df.columns = rec_df.columns.str.strip().str.lower()
+    df.columns = df.columns.str.strip().str.lower()
+
+    # Format dates and Pick 3
     rec_df["date"] = pd.to_datetime(rec_df["date"], errors="coerce").dt.date
     rec_df["recommended_pick3"] = rec_df["recommended_pick3"].apply(
         lambda x: ", ".join(list(str(x))) if pd.notna(x) else x
     )
-    merged = pd.merge(df, rec_df, how="inner", left_on=["date", "draw"], right_on=["date", "draw"])
+
+    # Merge actual draws with recommendations
+    merged = pd.merge(
+        df,
+        rec_df,
+        how="inner",
+        on=["date", "draw"]  # safe now because both are lowercase
+    )
+
     if not merged.empty:
         st.markdown("<br>", unsafe_allow_html=True)
         st.subheader("📊 Recommendation Accuracy History")
+
+        # Add hit/miss column
         merged["hit"] = merged.apply(
             lambda r: "✅" if str(r["fireball"]) == str(r["recommended_fireball"]) else "❌",
             axis=1
         )
+
+        # Display history table
         st.table(
             merged[["date", "draw", "recommended_pick3", "recommended_fireball", "fireball", "hit"]]
-            .sort_values(["date", "draw"], ascending=[False, True])
+            .sort_values(["date", "draw"], ascending=[False, False])  # Evening above Midday
             .head(20)
         )
+
+        # Overall accuracy
         hit_rate = (merged["hit"] == "✅").mean() * 100
         st.write(f"Overall Fireball Hit Rate: **{hit_rate:.1f}%**")
+
+        # Accuracy chart
         chart_df = merged.sort_values(["date", "draw"]).tail(30)
         chart_df["Hit Value"] = chart_df["hit"].map({"✅": 1, "❌": 0})
-        fig_acc = px.scatter(chart_df, x="date", y="Hit Value", color="hit", symbol="draw",
-                             title="Hit/Miss Over Time (Last 30 Draws)",
-                             labels={"Hit Value": "Result", "date": "Date"},
-                             color_discrete_map={"✅": "green", "❌": "red"})
+
+        fig_acc = px.scatter(
+            chart_df,
+            x="date",
+            y="Hit Value",
+            color="hit",
+            symbol="draw",
+            title="Hit/Miss Over Time (Last 30 Draws)",
+            labels={"Hit Value": "Result", "date": "Date"},
+            color_discrete_map={"✅": "green", "❌": "red"}
+        )
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
-        st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        st.plotly_chart(fig_acc, use_container_width=True,
+                        config={"displayModeBar": False, "scrollZoom": False})
