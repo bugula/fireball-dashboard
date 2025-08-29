@@ -161,6 +161,7 @@ heatmap_data = df.groupby(["weekday", "fireball"]).size().reset_index(name="coun
 fireball_order = [str(i) for i in range(10)]
 pivot = heatmap_data.pivot(index="weekday", columns="fireball", values="count") \
     .reindex(weekday_order).fillna(0)[fireball_order]
+
 fig3 = px.imshow(
     pivot,
     labels=dict(x="Fireball", y="Weekday", color="Count"),
@@ -168,11 +169,18 @@ fig3 = px.imshow(
     aspect="auto", color_continuous_scale="Viridis",
     title="Fireball Frequency by Weekday"
 )
-fig3.update_layout(
-    xaxis=dict(fixedrange=True),
-    yaxis=dict(fixedrange=True)
+
+# Force all fireballs (0–9) to appear on x-axis
+fig3.update_xaxes(
+    tickmode="array",
+    tickvals=list(range(10)),
+    ticktext=[str(i) for i in range(10)],
+    fixedrange=True
 )
+fig3.update_yaxes(fixedrange=True)
+
 st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 # --- Recommendation History & Accuracy ---
@@ -233,5 +241,6 @@ if not rec_df.empty:
             range=[-0.5, 1.5]
         )
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
