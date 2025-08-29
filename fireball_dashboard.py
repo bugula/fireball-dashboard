@@ -82,8 +82,8 @@ for col in ["num1", "num2", "num3"]:
 
 if fire_rec:
     # Style pick 3 numbers as white circles with black text
-pick3_html = "".join([style_number(n) for n in pick3])
-fireball_html = style_number(fire_rec, fireball=True)
+    pick3_html = "".join([style_number(n) for n in pick3])
+    fireball_html = style_number(fire_rec, fireball=True)
 
 st.markdown(
     f"<div style='background-color:#f0f2f6; padding:15px; border-radius:10px; "
@@ -278,6 +278,7 @@ if not rec_df.empty:
             range=[-0.5, 1.5]
         )
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
