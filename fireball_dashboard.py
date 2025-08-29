@@ -67,8 +67,29 @@ for col in ["num1", "num2", "num3"]:
     pick3.append(str(combined.idxmax()) if not combined.empty else "0")
 
 if fire_rec:
-    pick3_display = ", ".join(pick3)
-    st.success(f"Pick 3: **{pick3_display} & 🔥 Fireball {fire_rec}**")
+    # Style pick 3 numbers as white circles with black text
+pick3_html = "".join(
+    [f"<span style='display:inline-block; width:35px; height:35px; "
+      f"border-radius:50%; background-color:white; color:black; "
+      f"text-align:center; line-height:35px; font-weight:bold; "
+      f"margin-right:5px; border:1px solid black;'>{n}</span>" for n in pick3]
+)
+
+# Style fireball number as orange circle with white text
+fireball_html = (
+    f"<span style='display:inline-block; width:35px; height:35px; "
+    f"border-radius:50%; background-color:orange; color:white; "
+    f"text-align:center; line-height:35px; font-weight:bold; "
+    f"margin-left:10px;'>{fire_rec}</span>"
+)
+
+# Render full recommendation line
+st.markdown(
+    f"<div style='font-size:18px; font-weight:bold;'>"
+    f"Recommended: {pick3_html} + 🔥 {fireball_html}</div>",
+    unsafe_allow_html=True
+)
+
 
 
     # --- Log recommendation only once per draw ---
@@ -241,6 +262,7 @@ if not rec_df.empty:
             range=[-0.5, 1.5]
         )
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
