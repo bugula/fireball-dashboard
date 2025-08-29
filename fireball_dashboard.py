@@ -168,6 +168,10 @@ fig3 = px.imshow(
     aspect="auto", color_continuous_scale="Viridis",
     title="Fireball Frequency by Weekday"
 )
+fig3.update_layout(
+    xaxis=dict(fixedrange=True),
+    yaxis=dict(fixedrange=True)
+)
 st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
 
@@ -229,4 +233,5 @@ if not rec_df.empty:
             range=[-0.5, 1.5]
         )
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
