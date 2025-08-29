@@ -7,6 +7,20 @@ from datetime import datetime
 import os
 import json
 
+def style_number(num, fireball=False):
+    """Return HTML span for a styled circle number."""
+    if fireball:
+        return (f"<span style='display:inline-block; width:35px; height:35px; "
+                f"border-radius:50%; background-color:orange; color:white; "
+                f"text-align:center; line-height:35px; font-weight:bold; "
+                f"margin:2px;'>{num}</span>")
+    else:
+        return (f"<span style='display:inline-block; width:35px; height:35px; "
+                f"border-radius:50%; background-color:white; color:black; "
+                f"text-align:center; line-height:35px; font-weight:bold; "
+                f"margin:2px; border:1px solid black;'>{num}</span>")
+
+
 st.set_page_config(page_title="Fireball Dashboard", layout="wide")
 st.title("Fireball Dashboard")
 
@@ -68,27 +82,17 @@ for col in ["num1", "num2", "num3"]:
 
 if fire_rec:
     # Style pick 3 numbers as white circles with black text
-    pick3_html = "".join(
-        [f"<span style='display:inline-block; width:35px; height:35px; "
-        f"border-radius:50%; background-color:white; color:black; "
-        f"text-align:center; line-height:35px; font-weight:bold; "
-        f"margin-right:5px; border:1px solid black;'>{n}</span>" for n in pick3]
-    )
+pick3_html = "".join([style_number(n) for n in pick3])
+fireball_html = style_number(fire_rec, fireball=True)
 
-    # Style fireball number as orange circle with white text
-    fireball_html = (
-        f"<span style='display:inline-block; width:35px; height:35px; "
-        f"border-radius:50%; background-color:orange; color:white; "
-        f"text-align:center; line-height:35px; font-weight:bold; "
-        f"margin-left:10px;'>{fire_rec}</span>"
-    )
+st.markdown(
+    f"<div style='background-color:#f0f2f6; padding:15px; border-radius:10px; "
+    f"border:2px solid #ffa500; text-align:center;'>"
+    f"<div style='font-size:20px; font-weight:bold;'>"
+    f"Recommended: {pick3_html} + {fireball_html}</div></div>",
+    unsafe_allow_html=True
+)
 
-    # Render full recommendation line
-    st.markdown(
-        f"<div style='font-size:18px; font-weight:bold;'>"
-        f"Recommended: {pick3_html} + 🔥 {fireball_html}</div>",
-        unsafe_allow_html=True
-    )
 
 
     # --- Log recommendation only once per draw ---
@@ -108,7 +112,20 @@ st.subheader("🕒 Last 14 Draws (Pick 3 + Fireball)")
 df["draw_sort"] = df["draw"].map({"Midday": 0, "Evening": 1})
 last14 = df.sort_values(["date", "draw_sort"], ascending=[False, True]).head(14)
 last14["Pick 3"] = last14["num1"].astype(str) + ", " + last14["num2"].astype(str) + ", " + last14["num3"].astype(str)
-st.table(last14[["date", "draw", "Pick 3", "fireball"]])
+styled_last14 = last14.copy()
+styled_last14["Pick 3"] = styled_last14.apply(
+    lambda r: "".join([style_number(r["num1"]), style_number(r["num2"]), style_number(r["num3"])]),
+    axis=1
+)
+styled_last14["Fireball"] = styled_last14["fireball"].apply(lambda x: style_number(x, fireball=True))
+
+st.markdown("### 🕒 Last 14 Draws (Pick 3 + Fireball)")
+st.write(
+    styled_last14[["date", "draw", "Pick 3", "Fireball"]]
+    .to_html(escape=False, index=False),
+    unsafe_allow_html=True
+)
+
 
 # --- Frequency in Last 14 ---
 st.subheader("📊 Fireball Frequency (Last 14 Draws)")
@@ -261,6 +278,7 @@ if not rec_df.empty:
             range=[-0.5, 1.5]
         )
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
