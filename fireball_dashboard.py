@@ -265,7 +265,9 @@ if not rec_df.empty and not df.empty:
         st.table(
             merged[["date", "draw", "recommended_fireball", "fireball", "hit"]]
             .sort_values(["date", "draw"], ascending=[False, False])
+            .reset_index(drop=True)   # this removes the index column
         )
+
 
         # Hit rate
         hit_rate = (merged["hit"] == "✅").mean() * 100
@@ -291,3 +293,4 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to display yet.")
 else:
     st.info("Not enough data to display recommendation accuracy.")
+
