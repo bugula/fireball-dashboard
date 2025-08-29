@@ -125,9 +125,9 @@ for d in [str(i) for i in range(10)]:
 most_overdue = max(gaps, key=gaps.get)
 gap_len = gaps[most_overdue]
 
-# Styled overdue highlight
+# Styled overdue highlight (centered)
 overdue_html = (
-    f"<div style='font-size:16px; margin-top:10px;'>"
+    f"<div style='font-size:16px; margin-top:10px; text-align:center;'>"
     f"⏳ Overdue: "
     f"<span style='display:inline-block; width:35px; height:35px; "
     f"border-radius:50%; background-color:gray; color:white; "
@@ -259,6 +259,7 @@ if not rec_df.empty and not df.empty:
                              color_discrete_map={"✅": "green", "❌": "red"})
         fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
         st.plotly_chart(fig_acc, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
 
 
 
