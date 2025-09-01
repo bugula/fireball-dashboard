@@ -279,15 +279,16 @@ if not rec_df.empty and not df.empty:
                  f"(vs baseline 10% → {perf_str})")
 
         
-        # Add draw_sort so Evening sorts after Midday
-        merged["draw_sort"] = merged["draw"].map({"Midday": 0, "Evening": 1})
+        # Force Evening before Midday within each date
+        merged["draw"] = merged["draw"].astype(str).str.strip().str.title()
+        merged["draw"] = pd.Categorical(merged["draw"], categories=["Evening", "Midday"], ordered=True)
 
-        # Table display
-        history_html = merged[["date", "draw", "recommended_fireball", "fireball", "hit"]] \
-            .sort_values(["date", "draw_sort"], ascending=[False, False]) \
-            .to_html(escape=False, index=False)
+        table_df = merged.sort_values(["date", "draw"], ascending=[False, True])[
+            ["date", "draw", "recommended_fireball", "fireball", "hit"]
+        ]
 
-        # Inject CSS to style table
+        history_html = table_df.to_html(escape=False, index=False)
+
         history_html = history_html.replace(
             "<table border=\"1\" class=\"dataframe\">",
             "<table style='width:100%; border-collapse:collapse; font-size:16px; text-align:center;'>"
@@ -297,8 +298,8 @@ if not rec_df.empty and not df.empty:
             "<th>", "<th style='text-align:center; vertical-align:middle;'>"
         )
 
-        # Render table
         st.markdown(history_html, unsafe_allow_html=True)
+
 
 
 
@@ -322,11 +323,3 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to display yet.")
 else:
     st.info("Not enough data to display recommendation accuracy.")
-
-
-
-
-
-
-
-
