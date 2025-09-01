@@ -303,30 +303,6 @@ if not rec_df.empty and not df.empty:
 
 
 
-        # Accuracy chart
-        chart_df = merged.sort_values(["date", "draw"])
-        chart_df["Hit Value"] = chart_df["hit"].map({"✅": 1, "❌": 0})
-        fig_acc = px.scatter(
-            chart_df,
-            x="date",
-            y="Hit Value",
-            color="hit",
-            symbol="draw",
-            title="Hit/Miss Over Last 14 Completed Recommendations",
-            labels={"Hit Value": "Result", "date": "Date"},
-            color_discrete_map={"✅": "green", "❌": "red"}
-        )
-        fig_acc.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
-        st.plotly_chart(fig_acc, use_container_width=True,
-                        config={"displayModeBar": False, "scrollZoom": False})
-    else:
-        st.info("No completed recommendations to display yet.")
-else:
-    st.info("Not enough data to display recommendation accuracy.")
-
-
-
-
 # --- All-Time Recommendation Accuracy ---
 st.markdown("<br>", unsafe_allow_html=True)
 st.subheader("📈 All-Time Recommendation Accuracy")
@@ -387,3 +363,4 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
