@@ -62,14 +62,23 @@ with st.sidebar.form("new_draw_form"):
         data_sheet.append_row(row)
         st.sidebar.success(f"✅ Added {draw_type} draw {num1}{num2}{num3} + Fireball {new_fireball}")
 
+from datetime import datetime, time
+import pytz
+
 # --- Recommendation Engine ---
-# Decide which draw this recommendation is for (flip from the most recent logged draw)
-if not df.empty:
-    df_sorted = df.sort_values(["date", "draw_sort"], ascending=[True, True]).reset_index(drop=True)
-    last_draw_row = df_sorted.iloc[-1]
-    draw_type_for_rec = "Evening" if last_draw_row["draw"] == "Midday" else "Midday"
-else:
-    draw_type_for_rec = "Midday"  # fallback if no data yet
+# Use Eastern time to align with Illinois draw schedule
+est = pytz.timezone("US/Eastern")
+now_est = datetime.now(est)
+
+if now_est.time() < time(13, 35):   # before 1:35pm EST → waiting for Midday draw
+    draw_type_for_rec = "Midday"
+    rec_date = now_est.date()
+elif now_est.time() < time(22, 15): # before 10:15pm EST → waiting for Evening draw
+    draw_type_for_rec = "Evening"
+    rec_date = now_est.date()
+else:                               # after 10:15pm EST → next rec will be tomorrow's Midday
+    draw_type_for_rec = "Midday"
+    rec_date = (now_est + pd.Timedelta(days=1)).date()
 
 st.markdown("<br>", unsafe_allow_html=True)
 st.subheader(f"🔥 Recommended for {draw_type_for_rec}")
@@ -310,6 +319,7 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to display yet.")
 else:
     st.info("Not enough data to display recommendation accuracy.")
+
 
 
 
