@@ -323,3 +323,67 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to display yet.")
 else:
     st.info("Not enough data to display recommendation accuracy.")
+
+
+
+
+# --- All-Time Recommendation Accuracy ---
+st.markdown("<br>", unsafe_allow_html=True)
+st.subheader("📈 All-Time Recommendation Accuracy")
+
+rec_df = pd.DataFrame(rec_sheet.get_all_records())
+
+if not rec_df.empty and not df.empty:
+    # Normalize columns
+    rec_df.columns = rec_df.columns.str.strip().str.lower()
+    df.columns = df.columns.str.strip().str.lower()
+
+    # Ensure types match
+    rec_df["date"] = pd.to_datetime(rec_df["date"], errors="coerce").dt.date
+    rec_df["draw"] = rec_df["draw"].astype(str).str.strip().str.title()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    df["draw"] = df["draw"].astype(str).str.strip().str.title()
+
+    # Merge all recs with actual results
+    merged_all = pd.merge(
+        rec_df,
+        df[["date", "draw", "fireball"]],
+        on=["date", "draw"],
+        how="inner"
+    )
+
+    if not merged_all.empty:
+        merged_all["hit"] = merged_all.apply(
+            lambda r: "✅" if str(r["fireball"]) == str(r["recommended_fireball"]) else "❌",
+            axis=1
+        )
+
+        # Calculate all-time accuracy
+        hit_rate_all = (merged_all["hit"] == "✅").mean() * 100
+        perf_vs_baseline = hit_rate_all - 10
+        perf_str = f"+{perf_vs_baseline:.1f}%" if perf_vs_baseline >= 0 else f"{perf_vs_baseline:.1f}%"
+
+        st.write(f"All-time Hit Rate: **{hit_rate_all:.1f}%** "
+                 f"(vs baseline 10% → {perf_str})")
+
+        # Optional: trend chart over time
+        chart_df = merged_all.sort_values(["date", "draw"])
+        chart_df["Hit Value"] = chart_df["hit"].map({"✅": 1, "❌": 0})
+
+        fig_all = px.scatter(
+            chart_df,
+            x="date",
+            y="Hit Value",
+            color="hit",
+            symbol="draw",
+            title="Hit/Miss Over Time (All Data)",
+            labels={"Hit Value": "Result", "date": "Date"},
+            color_discrete_map={"✅": "green", "❌": "red"}
+        )
+        fig_all.update_yaxes(tickvals=[0, 1], ticktext=["Miss", "Hit"], range=[-0.5, 1.5])
+        st.plotly_chart(fig_all, use_container_width=True,
+                        config={"displayModeBar": False, "scrollZoom": False})
+    else:
+        st.info("No completed recommendations to calculate all-time accuracy yet.")
+else:
+    st.info("Not enough data to display all-time accuracy.")
