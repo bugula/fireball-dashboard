@@ -239,7 +239,7 @@ if not df.empty:
 
 # --- Recommendation History & Accuracy (Last 14 completed draws) ---
 st.markdown("<br>", unsafe_allow_html=True)
-st.subheader("📊 Last 14 Fireball Recommendations vs Results")
+st.subheader("📊 Last 14 Fireball Recommendations")
 
 rec_df = pd.DataFrame(rec_sheet.get_all_records())
 
@@ -275,7 +275,7 @@ if not rec_df.empty and not df.empty:
         performance_vs_baseline = hit_rate - 10
         perf_str = f"+{performance_vs_baseline:.1f}%" if performance_vs_baseline >= 0 else f"{performance_vs_baseline:.1f}%"
 
-        st.write(f"Hit Rate (last 14 completed): **{hit_rate:.1f}%** "
+        st.write(f"Hit Rate: **{hit_rate:.1f}%** "
                  f"(vs baseline 10% → {perf_str})")
 
         
@@ -339,7 +339,7 @@ if not rec_df.empty and not df.empty:
         perf_vs_baseline = hit_rate_all - 10
         perf_str = f"+{perf_vs_baseline:.1f}%" if perf_vs_baseline >= 0 else f"{perf_vs_baseline:.1f}%"
 
-        st.write(f"All-time Hit Rate: **{hit_rate_all:.1f}%** "
+        st.write(f"Hit Rate: **{hit_rate_all:.1f}%** "
                  f"(vs baseline 10% → {perf_str})")
 
         # Optional: trend chart over time
@@ -363,4 +363,5 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
 
