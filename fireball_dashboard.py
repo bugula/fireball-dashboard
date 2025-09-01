@@ -279,10 +279,12 @@ if not rec_df.empty and not df.empty:
                  f"(vs baseline 10% → {perf_str})")
 
         
+        # Add draw_sort so Evening sorts after Midday
+        merged["draw_sort"] = merged["draw"].map({"Midday": 0, "Evening": 1})
+
         # Table display
-        # Convert to styled HTML (no index)
         history_html = merged[["date", "draw", "recommended_fireball", "fireball", "hit"]] \
-            .sort_values(["date", "draw"], ascending=[False, False]) \
+            .sort_values(["date", "draw_sort"], ascending=[False, False]) \
             .to_html(escape=False, index=False)
 
         # Inject CSS to style table
@@ -297,6 +299,7 @@ if not rec_df.empty and not df.empty:
 
         # Render table
         st.markdown(history_html, unsafe_allow_html=True)
+
 
 
         # Accuracy chart
@@ -319,6 +322,7 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to display yet.")
 else:
     st.info("Not enough data to display recommendation accuracy.")
+
 
 
 
