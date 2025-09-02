@@ -66,23 +66,43 @@ from datetime import datetime, time
 import pytz
 
 # --- Recommendation Engine ---
-# Use Eastern time to align with Illinois draw schedule
-est = pytz.timezone("US/Eastern")
-now_est = datetime.now(est)
+# --- Recommendation Engine (data-driven next slot) ---
+# Decide which draw to recommend based on what's already logged in df
+if not df.empty:
+    last_date = df["date"].max()
+    last_day = df[df["date"] == last_date]
+    draws_present = set(last_day["draw"].astype(str).str.strip().str.title())
 
-if now_est.time() < time(13, 35):   # before 1:35pm EST → waiting for Midday draw
+    if "Midday" in draws_present and "Evening" in draws_present:
+        # Both slots done for last_date -> next is tomorrow's Midday
+        rec_date = (pd.to_datetime(last_date) + pd.Timedelta(days=1)).date()
+        draw_type_for_rec = "Midday"
+    elif "Midday" in draws_present:
+        # Only Midday entered -> next is same-day Evening
+        rec_date = last_date
+        draw_type_for_rec = "Evening"
+    elif "Evening" in draws_present:
+        # Only Evening entered -> next is tomorrow's Midday
+        rec_date = (pd.to_datetime(last_date) + pd.Timedelta(days=1)).date()
+        draw_type_for_rec = "Midday"
+    else:
+        # Shouldn't happen, but default to same-day Midday
+        rec_date = last_date
+        draw_type_for_rec = "Midday"
+else:
+    # No data yet: recommend today's Midday
+    rec_date = datetime.now().date()
     draw_type_for_rec = "Midday"
-    rec_date = now_est.date()
-elif now_est.time() < time(22, 15): # before 10:15pm EST → waiting for Evening draw
-    draw_type_for_rec = "Evening"
-    rec_date = now_est.date()
-else:                               # after 10:15pm EST → next rec will be tomorrow's Midday
-    draw_type_for_rec = "Midday"
-    rec_date = (now_est + pd.Timedelta(days=1)).date()
 
 st.markdown("<br>", unsafe_allow_html=True)
-st.subheader(f"🔥 Recommended for {draw_type_for_rec}")
-recent_window = df[pd.to_datetime(df["date"]) > (pd.to_datetime(df["date"]).max() - pd.Timedelta(days=14))] if not df.empty else df
+st.subheader(f"🔥 Recommended for {draw_type_for_rec} ({rec_date})")
+
+# Window for stats
+recent_window = (
+    df[pd.to_datetime(df["date"]) > (pd.to_datetime(df["date"]).max() - pd.Timedelta(days=14))]
+    if not df.empty else df
+)
+
 
 # Fireball recommendation
 if not df.empty and not recent_window.empty:
@@ -147,16 +167,18 @@ overdue_html = (
 
 st.markdown(overdue_html, unsafe_allow_html=True)
 
-
-# Log recommendation only once per draw
+# --- Log recommendation only once per draw slot (data-driven) ---
 rec_data = rec_sheet.get_all_records()
-today_str = str(datetime.now().date())
+rec_date_str = str(rec_date)
+
 already_logged = any(
-    str(row.get("date")) == today_str and str(row.get("draw")) == draw_type_for_rec
+    str(row.get("date")) == rec_date_str and str(row.get("draw")).strip().title() == draw_type_for_rec
     for row in rec_data
-    )
-if not already_logged:
-    rec_sheet.append_row([today_str, draw_type_for_rec, ''.join(pick3), fire_rec])
+)
+
+if not already_logged and fire_rec:
+    rec_sheet.append_row([rec_date_str, draw_type_for_rec, ''.join(pick3), fire_rec])
+
 
 # --- Quick View: Last 14 Draws ---
 st.markdown("<br>", unsafe_allow_html=True)
@@ -363,5 +385,6 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
 
 
