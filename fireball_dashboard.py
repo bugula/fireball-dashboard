@@ -139,7 +139,7 @@ else:
     if not df.empty and not recent_window.empty:
         recent_fire   = recent_window["fireball"].value_counts(normalize=True)
         overall_fire  = df["fireball"].value_counts(normalize=True)
-        fire_combined = (recent_fire.add(overall_fire, fill_value=0)) / 2
+        fire_combined = (0.25 * recent_fire.add(0, fill_value=0)) + (0.75 * overall_fire)
         fire_rec = fire_combined.idxmax() if not fire_combined.empty else None
 
     # Pick 3 (slot-wise)
@@ -380,4 +380,5 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
 
