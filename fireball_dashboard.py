@@ -6,6 +6,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import os
 import json
+import pytz
+
 
 # ---------- styling helpers ----------
 def style_number(num, fireball=False):
@@ -49,7 +51,9 @@ if not df.empty:
 # ---------- Add New Drawing ----------
 st.sidebar.header("➕ Add Latest Drawing")
 with st.sidebar.form("new_draw_form"):
-    new_date = st.date_input("Draw Date")
+    est = pytz.timezone("US/Eastern")
+    today_est = datetime.now(est).date()
+    new_date = st.date_input("Draw Date", value=today_est)
     draw_type = st.selectbox("Draw Type", ["Midday", "Evening"])
     new_fireball = st.number_input("Fireball", 0, 9, step=1)
     num1 = st.number_input("Pick 3 - Number 1", 0, 9, step=1)
@@ -376,3 +380,4 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
