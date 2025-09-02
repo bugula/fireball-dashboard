@@ -148,7 +148,7 @@ else:
         for col in ["num1", "num2", "num3"]:
             recent_freq = recent_window[col].value_counts(normalize=True)
             overall_freq = df[col].value_counts(normalize=True)
-            combined = (recent_freq.add(overall_freq, fill_value=0)) / 2
+            combined = (0.25 * recent_freq.add(0, fill_value=0)) + (0.75 * overall_freq)
             pick3.append(str(combined.idxmax()) if not combined.empty else "0")
     else:
         pick3 = ["0", "0", "0"]
@@ -380,5 +380,6 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
 
 
