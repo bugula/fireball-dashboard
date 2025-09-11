@@ -114,26 +114,26 @@ existing_rec = next(
 
 if existing_rec:
     # ----- use logged rec (ensures banner matches sheet) -----
-fire_rec  = str(existing_rec.get("recommended_fireball"))
+    fire_rec  = str(existing_rec.get("recommended_fireball"))
 
-raw_pick3 = existing_rec.get("recommended_pick3")
+    raw_pick3 = existing_rec.get("recommended_pick3")
 
-# Robust parse: handle "1,2,3", 123, "065", or even "65"
-s = "" if raw_pick3 is None else str(raw_pick3).strip()
+    # Robust parse: handle "1,2,3", 123, "065", or even "65"
+    s = "" if raw_pick3 is None else str(raw_pick3).strip()
 
-if "," in s:
-    parts = [p.strip() for p in s.split(",")]
-    digits = [d for d in parts if d.isdigit()]
-else:
-    digits = [ch for ch in s if ch.isdigit()]
+    if "," in s:
+        parts = [p.strip() for p in s.split(",")]
+        digits = [d for d in parts if d.isdigit()]
+    else:
+        digits = [ch for ch in s if ch.isdigit()]
 
-# Ensure exactly 3 digits, preserving leading zeros if missing
-if len(digits) < 3:
-    digits = (["0"] * (3 - len(digits))) + digits
-elif len(digits) > 3:
-    digits = digits[:3]
+    # Ensure exactly 3 digits, preserving leading zeros if missing
+    if len(digits) < 3:
+        digits = (["0"] * (3 - len(digits))) + digits
+    elif len(digits) > 3:
+        digits = digits[:3]
 
-pick3_html = "".join([style_number(n) for n in digits])
+    pick3_html = "".join([style_number(n) for n in digits])
 
     fireball_html = style_number(fire_rec, fireball=True)
 
@@ -397,6 +397,7 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
 
 
 
