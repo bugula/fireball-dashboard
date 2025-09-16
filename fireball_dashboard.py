@@ -574,6 +574,7 @@ if not df.empty:
 # ======================================================================
 #                 CYCLE ANALYSIS TABLE + COMPARISON CHART
 # ======================================================================
+# --- Fireball Cycle Analysis (Average vs Current Gaps) ---
 if not df.empty:
     st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("🔄 Fireball Cycle Analysis (Average vs Current Gaps)")
@@ -598,6 +599,7 @@ if not df.empty:
                 "_sort_ratio": overdue_ratio if overdue_ratio is not None else -1.0
             })
         else:
+            # Not enough history for a real avg; treat as not-overdue and sort to bottom
             rows.append({
                 "Fireball": d,
                 "Avg Gap": None,
@@ -608,6 +610,8 @@ if not df.empty:
             })
 
     gap_df = pd.DataFrame(rows)
+
+    # Sort by most overdue first (highest ratio)
     gap_df = gap_df.sort_values("_sort_ratio", ascending=False).drop(columns=["_sort_ratio"]).reset_index(drop=True)
 
     # Pretty display: highlight overdue rows
@@ -616,9 +620,10 @@ if not df.empty:
 
     display_cols = ["Fireball", "Avg Gap", "Current Gap", "Overdue %"]
     styled = gap_df[display_cols + ["Is Overdue"]].style.apply(highlight_overdue, axis=1).hide(axis="columns", subset=["Is Overdue"])
+
     st.dataframe(styled, use_container_width=True)
 
-    # Comparison chart (keeps same order as table)
+    # Optional: comparison chart (keeps same order as table)
     fig_gap_compare = px.bar(
         gap_df,
         x="Fireball",
@@ -854,6 +859,7 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
 
 
 
