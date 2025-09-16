@@ -364,17 +364,16 @@ if not df.empty:
 
     # Build highlighted HTML table (Overdue rows shaded)
     def row_html(row):
-        is_overdue = row["Status"] == "Overdue"
-        bg = "#fff6c2" if is_overdue else "transparent"
         return (
-            f"<tr style='background:{bg};'>"
+            "<tr>"
             f"<td style='text-align:center;'>{row['Fireball']}</td>"
             f"<td style='text-align:center;'>{'' if pd.isna(row['Avg Gap']) else row['Avg Gap']}</td>"
             f"<td style='text-align:center;'>{row['Current Gap']}</td>"
             f"<td style='text-align:center;'>{'' if pd.isna(row['Overdue %']) else int(row['Overdue %'])}%</td>"
             f"<td style='text-align:center;'>{row['Status']}</td>"
-            f"</tr>"
+            "</tr>"
         )
+
 
     header_html = (
         "<table style='width:100%; border-collapse:collapse; font-size:16px;'>"
@@ -518,6 +517,7 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
 
 
 
