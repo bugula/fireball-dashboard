@@ -224,28 +224,28 @@ if not df.empty:
         st.markdown(chips_html, unsafe_allow_html=True)
 
 # 3) Overdue highlight (based on full history)
-if not df.empty:
-    chron = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
-    chron["pos"] = chron.index
-    last_pos = chron.groupby("fireball")["pos"].max()
+#if not df.empty:
+#    chron = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
+#    chron["pos"] = chron.index
+#    last_pos = chron.groupby("fireball")["pos"].max()
 
-    N = len(chron)
-    gaps = {}
-    for d in [str(i) for i in range(10)]:
-        gaps[d] = (N - 1) - int(last_pos.loc[d]) if d in last_pos.index else N
+#    N = len(chron)
+#    gaps = {}
+#    for d in [str(i) for i in range(10)]:
+#        gaps[d] = (N - 1) - int(last_pos.loc[d]) if d in last_pos.index else N
 
-    most_overdue = max(gaps, key=gaps.get)
-    gap_len = gaps[most_overdue]
+#    most_overdue = max(gaps, key=gaps.get)
+#    gap_len = gaps[most_overdue]
 
-    overdue_html = (
-        f"<div style='font-size:16px; margin-top:10px; text-align:center;'>"
-        f"⏳ Overdue: "
-        f"<span style='display:inline-block; width:35px; height:35px; border-radius:50%; "
-        f"background-color:gray; color:white; text-align:center; line-height:35px; "
-        f"font-weight:bold; margin-left:5px;'>{most_overdue}</span> "
-        f"({gap_len} draws since last hit)</div>"
-    )
-    st.markdown(overdue_html, unsafe_allow_html=True)
+ #   overdue_html = (
+ #       f"<div style='font-size:16px; margin-top:10px; text-align:center;'>"
+ #       f"⏳ Overdue: "
+ #       f"<span style='display:inline-block; width:35px; height:35px; border-radius:50%; "
+ #       f"background-color:gray; color:white; text-align:center; line-height:35px; "
+ #       f"font-weight:bold; margin-left:5px;'>{most_overdue}</span> "
+ #       f"({gap_len} draws since last hit)</div>"
+ #   )
+ #   st.markdown(overdue_html, unsafe_allow_html=True)
 
 # ======================================================================
 #                           LAST 14 DRAWS (styled)
@@ -503,4 +503,5 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
 
