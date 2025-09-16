@@ -8,7 +8,6 @@ import os
 import json
 import pytz
 
-
 # ---------- styling helpers ----------
 def style_number(num, fireball=False):
     """Return HTML span for a styled circle number."""
@@ -22,6 +21,23 @@ def style_number(num, fireball=False):
                 f"border-radius:50%; background-color:white; color:black; "
                 f"text-align:center; line-height:35px; font-weight:bold; "
                 f"margin:2px; border:1px solid black;'>{num}</span>")
+
+def parse_pick3_for_display(raw):
+    """
+    Robustly parse recommended_pick3 that may be stored as 65, "065", "0,6,5", etc.
+    Returns a list of 3 digit strings with leading zeros preserved.
+    """
+    s = "" if raw is None else str(raw).strip()
+    if "," in s:
+        parts = [p.strip() for p in s.split(",")]
+        digits = [d for d in parts if d.isdigit()]
+    else:
+        digits = [ch for ch in s if ch.isdigit()]
+    if len(digits) < 3:
+        digits = (["0"] * (3 - len(digits))) + digits
+    elif len(digits) > 3:
+        digits = digits[:3]
+    return digits
 
 st.set_page_config(page_title="Fireball Dashboard", layout="wide")
 st.title("Fireball Dashboard")
@@ -53,7 +69,7 @@ st.sidebar.header("➕ Add Latest Drawing")
 with st.sidebar.form("new_draw_form"):
     est = pytz.timezone("US/Eastern")
     today_est = datetime.now(est).date()
-    new_date = st.date_input("Draw Date", value=today_est)
+    new_date = st.date_input("Draw Date", value=today_est)  # force EST default
     draw_type = st.selectbox("Draw Type", ["Midday", "Evening"])
     new_fireball = st.number_input("Fireball", 0, 9, step=1)
     num1 = st.number_input("Pick 3 - Number 1", 0, 9, step=1)
@@ -90,7 +106,7 @@ if not df.empty:
         rec_date = (pd.to_datetime(last_date) + pd.Timedelta(days=1)).date()
         draw_type_for_rec = "Midday"
     else:
-        # fallback (shouldn't happen normally)
+        # fallback
         rec_date = last_date
         draw_type_for_rec = "Midday"
 else:
@@ -104,37 +120,19 @@ st.subheader(f"🔥 Recommended for {draw_type_for_rec} ({rec_date})")
 # 2) Show the logged recommendation if it exists; otherwise compute + log + show
 rec_data = rec_sheet.get_all_records()
 rec_date_str = str(rec_date)
-
 existing_rec = next(
     (row for row in rec_data
      if str(row.get("date")) == rec_date_str and
-        str(row.get("draw")).strip().title() == draw_type_for_rec),
+        str(row.get("draw")).strip().str.title() == draw_type_for_rec),
     None
 )
 
 if existing_rec:
     # ----- use logged rec (ensures banner matches sheet) -----
     fire_rec  = str(existing_rec.get("recommended_fireball"))
+    digits = parse_pick3_for_display(existing_rec.get("recommended_pick3"))
 
-    raw_pick3 = existing_rec.get("recommended_pick3")
-
-    # Robust parse: handle "1,2,3", 123, "065", or even "65"
-    s = "" if raw_pick3 is None else str(raw_pick3).strip()
-
-    if "," in s:
-        parts = [p.strip() for p in s.split(",")]
-        digits = [d for d in parts if d.isdigit()]
-    else:
-        digits = [ch for ch in s if ch.isdigit()]
-
-    # Ensure exactly 3 digits, preserving leading zeros if missing
-    if len(digits) < 3:
-        digits = (["0"] * (3 - len(digits))) + digits
-    elif len(digits) > 3:
-        digits = digits[:3]
-
-    pick3_html = "".join([style_number(n) for n in digits])
-
+    pick3_html    = "".join([style_number(n) for n in digits])
     fireball_html = style_number(fire_rec, fireball=True)
 
     st.markdown(
@@ -145,7 +143,7 @@ if existing_rec:
     )
 
 else:
-    # ----- compute a new recommendation -----
+    # ----- compute a new recommendation (75/25 hist/recent) -----
     if not df.empty:
         recent_window = df[pd.to_datetime(df["date"]) > (pd.to_datetime(df["date"]).max() - pd.Timedelta(days=14))]
     else:
@@ -182,31 +180,49 @@ else:
         )
 
         # ----- log once per (date, draw) -----
+        # (If you'd like to force Sheets to keep leading zeros, use "'" + ''.join(pick3) and value_input_option)
         rec_sheet.append_row([rec_date_str, draw_type_for_rec, ''.join(pick3), fire_rec])
 
-# 3) Overdue highlight (based on full history)
+# ======================================================================
+#                   TOP 2 OVERDUE NOW (chips under banner)
+# ======================================================================
 if not df.empty:
-    chron = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
-    chron["pos"] = chron.index
-    last_pos = chron.groupby("fireball")["pos"].max()
-
-    N = len(chron)
-    gaps = {}
+    chron_all = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
+    chron_all["pos"] = chron_all.index
+    results_for_rank = []
     for d in [str(i) for i in range(10)]:
-        gaps[d] = (N - 1) - int(last_pos.loc[d]) if d in last_pos.index else N
+        positions = chron_all.index[chron_all["fireball"] == d].tolist()
+        if len(positions) > 1:
+            gaps = [positions[i] - positions[i-1] for i in range(1, len(positions))]
+            avg_gap = sum(gaps) / len(gaps)
+            current_gap = (len(chron_all) - 1) - positions[-1]
+            if avg_gap > 0:
+                ratio = current_gap / avg_gap
+                results_for_rank.append((d, current_gap, avg_gap, ratio))
+        elif len(positions) == 1:
+            # Seen once: treat current gap as distance since that hit; no avg yet
+            current_gap = (len(chron_all) - 1) - positions[-1]
+            # Use ratio None so these fall to bottom
+            results_for_rank.append((d, current_gap, None, -1))
 
-    most_overdue = max(gaps, key=gaps.get)
-    gap_len = gaps[most_overdue]
+    # Sort by ratio desc; take top 2 with valid avg
+    top2 = [t for t in sorted(results_for_rank, key=lambda x: x[3], reverse=True) if t[2] is not None][:2]
 
-    overdue_html = (
-        f"<div style='font-size:16px; margin-top:10px; text-align:center;'>"
-        f"⏳ Overdue: "
-        f"<span style='display:inline-block; width:35px; height:35px; border-radius:50%; "
-        f"background-color:gray; color:white; text-align:center; line-height:35px; "
-        f"font-weight:bold; margin-left:5px;'>{most_overdue}</span> "
-        f"({gap_len} draws since last hit)</div>"
-    )
-    st.markdown(overdue_html, unsafe_allow_html=True)
+    if top2:
+        chips = []
+        for digit, cur_gap, avg_gap, ratio in top2:
+            pct = f"{ratio*100:.0f}%"
+            chip = (
+                f"<span style='display:inline-flex; align-items:center; gap:6px; "
+                f"background:#fff6c2; border:1px solid #f1de85; border-radius:999px; "
+                f"padding:4px 10px; margin:4px;'>"
+                f"{style_number(digit)}"
+                f"<span style='font-weight:600; color:#5a4a00;'> {pct} of avg • gap {cur_gap}</span>"
+                f"</span>"
+            )
+            chips.append(chip)
+        chips_html = "<div style='text-align:center; margin-top:6px;'>Overdue now: " + " ".join(chips) + "</div>"
+        st.markdown(chips_html, unsafe_allow_html=True)
 
 # ======================================================================
 #                           LAST 14 DRAWS (styled)
@@ -276,7 +292,166 @@ if not df.empty:
     fig_gaps.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
     st.plotly_chart(fig_gaps, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
+# ======================================================================
+#                 CYCLE ANALYSIS TABLE + COMPARISON CHART
+# ======================================================================
+if not df.empty:
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.subheader("🔄 Fireball Cycle Analysis (Average vs Current Gaps)")
 
+    chron = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
+    chron["pos"] = chron.index
+
+    rows = []
+    for d in [str(i) for i in range(10)]:
+        positions = chron.index[chron["fireball"] == d].tolist()
+        if len(positions) > 1:
+            gaps = [positions[i] - positions[i-1] for i in range(1, len(positions))]
+            avg_gap = sum(gaps) / len(gaps)
+            current_gap = (len(chron) - 1) - positions[-1]
+            overdue_ratio = current_gap / avg_gap if avg_gap > 0 else None
+            rows.append({
+                "Fireball": d,
+                "Avg Gap": round(avg_gap, 1),
+                "Current Gap": current_gap,
+                "Overdue %": round(overdue_ratio * 100, 1) if overdue_ratio is not None else None,
+                "Is Overdue": (current_gap >= avg_gap) if avg_gap > 0 else False,
+                "_sort_ratio": overdue_ratio if overdue_ratio is not None else -1.0
+            })
+        else:
+            rows.append({
+                "Fireball": d,
+                "Avg Gap": None,
+                "Current Gap": len(chron),
+                "Overdue %": None,
+                "Is Overdue": False,
+                "_sort_ratio": -1.0
+            })
+
+    gap_df = pd.DataFrame(rows)
+    gap_df = gap_df.sort_values("_sort_ratio", ascending=False).drop(columns=["_sort_ratio"]).reset_index(drop=True)
+
+    # Pretty display: highlight overdue rows
+    def highlight_overdue(row):
+        return ['background-color: #fff6c2' if row.get("Is Overdue") else '' for _ in row]
+
+    display_cols = ["Fireball", "Avg Gap", "Current Gap", "Overdue %"]
+    styled = gap_df[display_cols + ["Is Overdue"]].style.apply(highlight_overdue, axis=1).hide(axis="columns", subset=["Is Overdue"])
+    st.dataframe(styled, use_container_width=True)
+
+    # Comparison chart (keeps same order as table)
+    fig_gap_compare = px.bar(
+        gap_df,
+        x="Fireball",
+        y=["Avg Gap", "Current Gap"],
+        barmode="group",
+        title="Average vs Current Gaps by Fireball (sorted by most overdue)",
+        category_orders={"Fireball": gap_df["Fireball"].tolist()}
+    )
+    fig_gap_compare.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+    st.plotly_chart(fig_gap_compare, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
+# ======================================================================
+#                RECOMMENDATION HISTORY (Last 14 completed)
+# ======================================================================
+st.markdown("<br>", unsafe_allow_html=True)
+st.subheader("📊 Last 14 Fireball Recommendations")
+
+rec_df = pd.DataFrame(rec_sheet.get_all_records())
+
+if not rec_df.empty and not df.empty:
+    # Normalize
+    rec_df.columns = rec_df.columns.str.strip().str.lower()
+    df.columns     = df.columns.str.strip().str.lower()
+
+    rec_df["date"] = pd.to_datetime(rec_df["date"], errors="coerce").dt.date
+    rec_df["draw"] = rec_df["draw"].astype(str).str.strip().str.title()
+    df["date"]     = pd.to_datetime(df["date"], errors="coerce").dt.date
+    df["draw"]     = df["draw"].astype(str).str.strip().str.title()
+
+    # Only completed draws (inner join)
+    merged = pd.merge(
+        rec_df,
+        df[["date", "draw", "fireball"]],
+        on=["date", "draw"],
+        how="inner"
+    )
+
+    # Limit to last 14 completed
+    merged = merged.sort_values(["date", "draw"], ascending=[False, False]).head(14)
+
+    if not merged.empty:
+        merged["hit"] = merged.apply(
+            lambda r: "✅" if str(r["fireball"]) == str(r["recommended_fireball"]) else "❌",
+            axis=1
+        )
+
+        # Hit rate vs baseline
+        hit_rate = (merged["hit"] == "✅").mean() * 100
+        perf_vs_baseline = hit_rate - 10
+        perf_str = f"+{perf_vs_baseline:.1f}%" if perf_vs_baseline >= 0 else f"{perf_vs_baseline:.1f}%"
+        st.write(f"Hit Rate: **{hit_rate:.1f}%** (vs baseline 10% → {perf_str})")
+
+        # Evening above Midday within date
+        merged["draw"] = pd.Categorical(merged["draw"], categories=["Evening", "Midday"], ordered=True)
+        table_df = merged.sort_values(["date", "draw"], ascending=[False, True])[
+            ["date", "draw", "recommended_fireball", "fireball", "hit"]
+        ]
+
+        # HTML table (no index)
+        history_html = table_df.to_html(escape=False, index=False)
+        history_html = history_html.replace(
+            "<table border=\"1\" class=\"dataframe\">",
+            "<table style='width:100%; border-collapse:collapse; font-size:16px; text-align:center;'>"
+        ).replace(
+            "<td>", "<td style='text-align:center; vertical-align:middle;'>"
+        ).replace(
+            "<th>", "<th style='text-align:center; vertical-align:middle;'>"
+        )
+        st.markdown(history_html, unsafe_allow_html=True)
+    else:
+        st.info("No completed recommendations to display yet.")
+else:
+    st.info("Not enough data to display recommendation accuracy.")
+
+# ======================================================================
+#                    ALL-TIME RECOMMENDATION ACCURACY
+# ======================================================================
+st.markdown("<br>", unsafe_allow_html=True)
+st.subheader("📈 All-Time Recommendation Accuracy")
+
+rec_df = pd.DataFrame(rec_sheet.get_all_records())
+
+if not rec_df.empty and not df.empty:
+    # Normalize
+    rec_df.columns = rec_df.columns.str.strip().str.lower()
+    df.columns     = df.columns.str.strip().str.lower()
+
+    rec_df["date"] = pd.to_datetime(rec_df["date"], errors="coerce").dt.date
+    rec_df["draw"] = rec_df["draw"].astype(str).str.strip().str.title()
+    df["date"]     = pd.to_datetime(df["date"], errors="coerce").dt.date
+    df["draw"]     = df["draw"].astype(str).str.strip().str.title()
+
+    merged_all = pd.merge(
+        rec_df,
+        df[["date", "draw", "fireball"]],
+        on=["date", "draw"],
+        how="inner"   # only completed draws count
+    )
+
+    if not merged_all.empty:
+        merged_all["hit"] = merged_all.apply(
+            lambda r: "✅" if str(r["fireball"]) == str(r["recommended_fireball"]) else "❌",
+            axis=1
+        )
+        hit_rate_all = (merged_all["hit"] == "✅").mean() * 100
+        perf_vs_baseline = hit_rate_all - 10
+        perf_str = f"+{perf_vs_baseline:.1f}%" if perf_vs_baseline >= 0 else f"{perf_vs_baseline:.1f}%"
+        st.write(f"Hit Rate: **{hit_rate_all:.1f}%** (vs baseline 10% → {perf_vs_baseline:+.1f}%)")
+    else:
+        st.info("No completed recommendations to calculate all-time accuracy yet.")
+else:
+    st.info("Not enough data to display all-time accuracy.")
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -574,7 +749,6 @@ if not df.empty:
 # ======================================================================
 #                 CYCLE ANALYSIS TABLE + COMPARISON CHART
 # ======================================================================
-# --- Fireball Cycle Analysis (Average vs Current Gaps) ---
 if not df.empty:
     st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("🔄 Fireball Cycle Analysis (Average vs Current Gaps)")
@@ -599,7 +773,6 @@ if not df.empty:
                 "_sort_ratio": overdue_ratio if overdue_ratio is not None else -1.0
             })
         else:
-            # Not enough history for a real avg; treat as not-overdue and sort to bottom
             rows.append({
                 "Fireball": d,
                 "Avg Gap": None,
@@ -610,8 +783,6 @@ if not df.empty:
             })
 
     gap_df = pd.DataFrame(rows)
-
-    # Sort by most overdue first (highest ratio)
     gap_df = gap_df.sort_values("_sort_ratio", ascending=False).drop(columns=["_sort_ratio"]).reset_index(drop=True)
 
     # Pretty display: highlight overdue rows
@@ -620,10 +791,9 @@ if not df.empty:
 
     display_cols = ["Fireball", "Avg Gap", "Current Gap", "Overdue %"]
     styled = gap_df[display_cols + ["Is Overdue"]].style.apply(highlight_overdue, axis=1).hide(axis="columns", subset=["Is Overdue"])
-
     st.dataframe(styled, use_container_width=True)
 
-    # Optional: comparison chart (keeps same order as table)
+    # Comparison chart (keeps same order as table)
     fig_gap_compare = px.bar(
         gap_df,
         x="Fireball",
@@ -736,134 +906,3 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
-
-
-# ======================================================================
-#                           HEATMAP
-# ======================================================================
-if not df.empty:
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.subheader("Fireball by Weekday Heatmap")
-    weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    df["weekday"] = pd.to_datetime(df["date"]).dt.day_name()
-    heatmap_data = df.groupby(["weekday", "fireball"]).size().reset_index(name="count")
-    fireball_order = [str(i) for i in range(10)]
-    pivot = (heatmap_data.pivot(index="weekday", columns="fireball", values="count")
-             .reindex(weekday_order).fillna(0)[fireball_order])
-    fig3 = px.imshow(pivot, labels=dict(x="Fireball", y="Weekday", color="Count"),
-                     x=fireball_order, y=weekday_order,
-                     aspect="auto", color_continuous_scale="Viridis",
-                     title="Fireball Frequency by Weekday")
-    fig3.update_xaxes(tickmode="array", tickvals=list(range(10)), ticktext=[str(i) for i in range(10)], fixedrange=True)
-    fig3.update_yaxes(fixedrange=True)
-    st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
-
-# ======================================================================
-#                RECOMMENDATION HISTORY (Last 14 completed)
-# ======================================================================
-st.markdown("<br>", unsafe_allow_html=True)
-st.subheader("📊 Last 14 Fireball Recommendations")
-
-rec_df = pd.DataFrame(rec_sheet.get_all_records())
-
-if not rec_df.empty and not df.empty:
-    # Normalize
-    rec_df.columns = rec_df.columns.str.strip().str.lower()
-    df.columns     = df.columns.str.strip().str.lower()
-
-    rec_df["date"] = pd.to_datetime(rec_df["date"], errors="coerce").dt.date
-    rec_df["draw"] = rec_df["draw"].astype(str).str.strip().str.title()
-    df["date"]     = pd.to_datetime(df["date"], errors="coerce").dt.date
-    df["draw"]     = df["draw"].astype(str).str.strip().str.title()
-
-    # Only completed draws (inner join)
-    merged = pd.merge(
-        rec_df,
-        df[["date", "draw", "fireball"]],
-        on=["date", "draw"],
-        how="inner"
-    )
-
-    # Limit to last 14 completed
-    merged = merged.sort_values(["date", "draw"], ascending=[False, False]).head(14)
-
-    if not merged.empty:
-        merged["hit"] = merged.apply(
-            lambda r: "✅" if str(r["fireball"]) == str(r["recommended_fireball"]) else "❌",
-            axis=1
-        )
-
-        # Hit rate vs baseline
-        hit_rate = (merged["hit"] == "✅").mean() * 100
-        perf_vs_baseline = hit_rate - 10
-        perf_str = f"+{perf_vs_baseline:.1f}%" if perf_vs_baseline >= 0 else f"{perf_vs_baseline:.1f}%"
-        st.write(f"Hit Rate: **{hit_rate:.1f}%** (vs baseline 10% → {perf_str})")
-
-        # Evening above Midday within date
-        merged["draw"] = pd.Categorical(merged["draw"], categories=["Evening", "Midday"], ordered=True)
-        table_df = merged.sort_values(["date", "draw"], ascending=[False, True])[
-            ["date", "draw", "recommended_fireball", "fireball", "hit"]
-        ]
-
-        # HTML table (no index)
-        history_html = table_df.to_html(escape=False, index=False)
-        history_html = history_html.replace(
-            "<table border=\"1\" class=\"dataframe\">",
-            "<table style='width:100%; border-collapse:collapse; font-size:16px; text-align:center;'>"
-        ).replace(
-            "<td>", "<td style='text-align:center; vertical-align:middle;'>"
-        ).replace(
-            "<th>", "<th style='text-align:center; vertical-align:middle;'>"
-        )
-        st.markdown(history_html, unsafe_allow_html=True)
-    else:
-        st.info("No completed recommendations to display yet.")
-else:
-    st.info("Not enough data to display recommendation accuracy.")
-
-# ======================================================================
-#                    ALL-TIME RECOMMENDATION ACCURACY
-# ======================================================================
-st.markdown("<br>", unsafe_allow_html=True)
-st.subheader("📈 All-Time Recommendation Accuracy")
-
-rec_df = pd.DataFrame(rec_sheet.get_all_records())
-
-if not rec_df.empty and not df.empty:
-    # Normalize
-    rec_df.columns = rec_df.columns.str.strip().str.lower()
-    df.columns     = df.columns.str.strip().str.lower()
-
-    rec_df["date"] = pd.to_datetime(rec_df["date"], errors="coerce").dt.date
-    rec_df["draw"] = rec_df["draw"].astype(str).str.strip().str.title()
-    df["date"]     = pd.to_datetime(df["date"], errors="coerce").dt.date
-    df["draw"]     = df["draw"].astype(str).str.strip().str.title()
-
-    merged_all = pd.merge(
-        rec_df,
-        df[["date", "draw", "fireball"]],
-        on=["date", "draw"],
-        how="inner"   # only completed draws count
-    )
-
-    if not merged_all.empty:
-        merged_all["hit"] = merged_all.apply(
-            lambda r: "✅" if str(r["fireball"]) == str(r["recommended_fireball"]) else "❌",
-            axis=1
-        )
-        hit_rate_all = (merged_all["hit"] == "✅").mean() * 100
-        perf_vs_baseline = hit_rate_all - 10
-        perf_str = f"+{perf_vs_baseline:.1f}%" if perf_vs_baseline >= 0 else f"{perf_vs_baseline:.1f}%"
-        st.write(f"Hit Rate: **{hit_rate_all:.1f}%** (vs baseline 10% → {perf_str})")
-    else:
-        st.info("No completed recommendations to calculate all-time accuracy yet.")
-else:
-    st.info("Not enough data to display all-time accuracy.")
-
-
-
-
-
-
-
-
