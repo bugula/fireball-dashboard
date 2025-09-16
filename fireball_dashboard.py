@@ -8,7 +8,6 @@ import os
 import json
 import pytz
 
-
 # ---------- styling helpers ----------
 def style_number(num, fireball=False):
     """Return HTML span for a styled circle number."""
@@ -108,7 +107,7 @@ rec_date_str = str(rec_date)
 existing_rec = next(
     (row for row in rec_data
      if str(row.get("date")) == rec_date_str and
-        str(row.get("draw")).strip().title() == draw_type_for_rec),
+        str(row.get("draw")).strip().str.title() == draw_type_for_rec),
     None
 )
 
@@ -117,24 +116,20 @@ if existing_rec:
     fire_rec  = str(existing_rec.get("recommended_fireball"))
 
     raw_pick3 = existing_rec.get("recommended_pick3")
-
     # Robust parse: handle "1,2,3", 123, "065", or even "65"
     s = "" if raw_pick3 is None else str(raw_pick3).strip()
-
     if "," in s:
         parts = [p.strip() for p in s.split(",")]
         digits = [d for d in parts if d.isdigit()]
     else:
         digits = [ch for ch in s if ch.isdigit()]
-
-    # Ensure exactly 3 digits, preserving leading zeros if missing
+    # Ensure exactly 3 digits (preserve leading zeros)
     if len(digits) < 3:
         digits = (["0"] * (3 - len(digits))) + digits
     elif len(digits) > 3:
         digits = digits[:3]
 
     pick3_html = "".join([style_number(n) for n in digits])
-
     fireball_html = style_number(fire_rec, fireball=True)
 
     st.markdown(
@@ -156,6 +151,7 @@ else:
     if not df.empty and not recent_window.empty:
         recent_fire   = recent_window["fireball"].value_counts(normalize=True)
         overall_fire  = df["fireball"].value_counts(normalize=True)
+        # 25% recent, 75% overall
         fire_combined = (0.25 * recent_fire.add(0, fill_value=0)) + (0.75 * overall_fire)
         fire_rec = fire_combined.idxmax() if not fire_combined.empty else None
 
@@ -183,6 +179,46 @@ else:
 
         # ----- log once per (date, draw) -----
         rec_sheet.append_row([rec_date_str, draw_type_for_rec, ''.join(pick3), fire_rec])
+
+# ======================================================================
+#                   TOP 2 OVERDUE NOW (chips under banner)
+# ======================================================================
+if not df.empty:
+    chron_all = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
+    chron_all["pos"] = chron_all.index
+    results_for_rank = []
+    for d in [str(i) for i in range(10)]:
+        positions = chron_all.index[chron_all["fireball"] == d].tolist()
+        if len(positions) > 1:
+            gaps = [positions[i] - positions[i-1] for i in range(1, len(positions))]
+            avg_gap = sum(gaps) / len(gaps)
+            current_gap = (len(chron_all) - 1) - positions[-1]
+            if avg_gap > 0:
+                ratio = current_gap / avg_gap
+                results_for_rank.append((d, current_gap, avg_gap, ratio))
+        elif len(positions) == 1:
+            # Seen once: treat current gap as distance since that hit
+            current_gap = (len(chron_all) - 1) - positions[-1]
+            results_for_rank.append((d, current_gap, None, -1))
+
+    # Sort by ratio desc; take top 2 with valid avg
+    top2 = [t for t in sorted(results_for_rank, key=lambda x: x[3], reverse=True) if t[2] is not None][:2]
+
+    if top2:
+        chips = []
+        for digit, cur_gap, avg_gap, ratio in top2:
+            pct = f"{ratio*100:.0f}%"
+            chip = (
+                f"<span style='display:inline-flex; align-items:center; gap:6px; "
+                f"background:#fff6c2; border:1px solid #f1de85; border-radius:999px; "
+                f"padding:4px 10px; margin:4px;'>"
+                f"{style_number(digit)}"
+                f"<span style='font-weight:600; color:#5a4a00;'> {pct} of avg • gap {cur_gap}</span>"
+                f"</span>"
+            )
+            chips.append(chip)
+        chips_html = "<div style='text-align:center; margin-top:6px;'>Overdue now: " + " ".join(chips) + "</div>"
+        st.markdown(chips_html, unsafe_allow_html=True)
 
 # 3) Overdue highlight (based on full history)
 if not df.empty:
@@ -276,9 +312,8 @@ if not df.empty:
     fig_gaps.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
     st.plotly_chart(fig_gaps, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
-
 # ======================================================================
-#                         AVG CYCLES
+#                         AVG CYCLES (tweaked)
 # ======================================================================
 if not df.empty:
     st.markdown("<br>", unsafe_allow_html=True)
@@ -294,21 +329,46 @@ if not df.empty:
             gap_lengths = [positions[i] - positions[i-1] for i in range(1, len(positions))]
             avg_gap = sum(gap_lengths) / len(gap_lengths)
             current_gap = len(chron) - 1 - positions[-1]
-            results.append({"Fireball": d, "Avg Gap": round(avg_gap, 1), "Current Gap": current_gap})
+            overdue_pct = (current_gap / avg_gap) * 100 if avg_gap > 0 else None
+            results.append({"Fireball": d, "Avg Gap": round(avg_gap, 1), "Current Gap": current_gap,
+                            "Overdue %": round(overdue_pct, 0) if overdue_pct is not None else None,
+                            "Status": "Overdue" if avg_gap and current_gap >= avg_gap else "On track"})
         else:
-            results.append({"Fireball": d, "Avg Gap": None, "Current Gap": len(chron)})
+            current_gap = len(chron)  # never/once seen
+            results.append({"Fireball": d, "Avg Gap": None, "Current Gap": current_gap,
+                            "Overdue %": None, "Status": "On track"})
 
     gap_df = pd.DataFrame(results)
 
-    # Highlight overdue numbers
-    gap_df["Status"] = gap_df.apply(
-        lambda r: "Overdue" if r["Avg Gap"] is not None and r["Current Gap"] >= r["Avg Gap"] else "On track",
-        axis=1
+    # Sort by most overdue first (Overdue % desc, None last)
+    gap_df["__sort_key"] = gap_df["Overdue %"].fillna(-1)
+    gap_df = gap_df.sort_values(["__sort_key", "Current Gap"], ascending=[False, False]).drop(columns="__sort_key")
+
+    # Build highlighted HTML table (Overdue rows shaded)
+    def row_html(row):
+        is_overdue = row["Status"] == "Overdue"
+        bg = "#fff6c2" if is_overdue else "transparent"
+        return (
+            f"<tr style='background:{bg};'>"
+            f"<td style='text-align:center;'>{row['Fireball']}</td>"
+            f"<td style='text-align:center;'>{'' if pd.isna(row['Avg Gap']) else row['Avg Gap']}</td>"
+            f"<td style='text-align:center;'>{row['Current Gap']}</td>"
+            f"<td style='text-align:center;'>{'' if pd.isna(row['Overdue %']) else int(row['Overdue %'])}%</td>"
+            f"<td style='text-align:center;'>{row['Status']}</td>"
+            f"</tr>"
+        )
+
+    header_html = (
+        "<table style='width:100%; border-collapse:collapse; font-size:16px;'>"
+        "<thead><tr>"
+        "<th>Fireball</th><th>Avg Gap</th><th>Current Gap</th><th>Overdue %</th><th>Status</th>"
+        "</tr></thead><tbody>"
     )
+    body_html = "".join(row_html(r) for _, r in gap_df.iterrows())
+    table_html = header_html + body_html + "</tbody></table>"
+    st.markdown(table_html, unsafe_allow_html=True)
 
-    st.dataframe(gap_df)
-
-    # Optional chart
+    # Optional chart (kept; follows the sorted data)
     fig_gap_compare = px.bar(
         gap_df,
         x="Fireball", y=["Avg Gap", "Current Gap"],
@@ -318,7 +378,6 @@ if not df.empty:
     fig_gap_compare.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
     st.plotly_chart(fig_gap_compare, use_container_width=True,
                     config={"displayModeBar": False, "scrollZoom": False})
-
 
 # ======================================================================
 #                           HEATMAP
@@ -441,8 +500,3 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
-
-
-
-
-
