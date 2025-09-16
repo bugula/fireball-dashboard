@@ -105,11 +105,14 @@ rec_data = rec_sheet.get_all_records()
 rec_date_str = str(rec_date)
 
 existing_rec = next(
-    (row for row in rec_data
-     if str(row.get("date")) == rec_date_str and
-        str(row.get("draw")).strip().str.title() == draw_type_for_rec),
+    (
+        row for row in rec_data
+        if str(row.get("date")) == rec_date_str
+        and ((row.get("draw") or "").strip().title() == draw_type_for_rec)
+    ),
     None
 )
+
 
 if existing_rec:
     # ----- use logged rec (ensures banner matches sheet) -----
@@ -500,3 +503,4 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
