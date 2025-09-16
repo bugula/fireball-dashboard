@@ -276,6 +276,50 @@ if not df.empty:
     fig_gaps.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
     st.plotly_chart(fig_gaps, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
+
+# ======================================================================
+#                         AVG CYCLES
+# ======================================================================
+if not df.empty:
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.subheader("🔄 Fireball Cycle Analysis (Average vs Current Gaps)")
+
+    chron = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
+    chron["pos"] = chron.index
+
+    results = []
+    for d in [str(i) for i in range(10)]:
+        positions = chron.index[chron["fireball"] == d].tolist()
+        if len(positions) > 1:
+            gap_lengths = [positions[i] - positions[i-1] for i in range(1, len(positions))]
+            avg_gap = sum(gap_lengths) / len(gap_lengths)
+            current_gap = len(chron) - 1 - positions[-1]
+            results.append({"Fireball": d, "Avg Gap": round(avg_gap, 1), "Current Gap": current_gap})
+        else:
+            results.append({"Fireball": d, "Avg Gap": None, "Current Gap": len(chron)})
+
+    gap_df = pd.DataFrame(results)
+
+    # Highlight overdue numbers
+    gap_df["Status"] = gap_df.apply(
+        lambda r: "Overdue" if r["Avg Gap"] is not None and r["Current Gap"] >= r["Avg Gap"] else "On track",
+        axis=1
+    )
+
+    st.dataframe(gap_df)
+
+    # Optional chart
+    fig_gap_compare = px.bar(
+        gap_df,
+        x="Fireball", y=["Avg Gap", "Current Gap"],
+        barmode="group",
+        title="Average vs Current Gaps by Fireball"
+    )
+    fig_gap_compare.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+    st.plotly_chart(fig_gap_compare, use_container_width=True,
+                    config={"displayModeBar": False, "scrollZoom": False})
+
+
 # ======================================================================
 #                           HEATMAP
 # ======================================================================
@@ -397,6 +441,7 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
 
 
 
