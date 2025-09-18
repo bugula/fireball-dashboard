@@ -392,9 +392,24 @@ if not df.empty:
         barmode="group",
         title="Average vs Current Gaps by Fireball"
     )
-    fig_gap_compare.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
-    st.plotly_chart(fig_gap_compare, use_container_width=True,
-                    config={"displayModeBar": False, "scrollZoom": False})
+
+    # Force all 10 fireballs (0–9) on the x-axis
+    fig_gap_compare.update_layout(
+        xaxis=dict(
+            tickmode="array",
+            tickvals=[str(i) for i in range(10)],  # values 0–9
+            ticktext=[str(i) for i in range(10)],  # labels 0–9
+            fixedrange=True
+        ),
+        yaxis=dict(fixedrange=True)
+    )
+
+    st.plotly_chart(
+        fig_gap_compare,
+        use_container_width=True,
+        config={"displayModeBar": False, "scrollZoom": False}
+    )
+
 
 # ======================================================================
 #                           HEATMAP
@@ -517,6 +532,7 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
 
 
 
