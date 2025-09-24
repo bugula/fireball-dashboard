@@ -135,36 +135,145 @@ def upsert_latest(ws, items):
         else:
             print(f"Exists:   {row_obj['date']} {row_obj['draw']} — skipped")
 
-def scrape_latest_cards():
+from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+
+PICK3_URL = "https://www.illinoislottery.com/dbg/results/pick3"
+
+# Selector assumptions (tune if the site tweaks markup):
+# - A single “card” per draw row (the list on the first page).
+# - Each card exposes date, draw label (Midday/Evening), pick-3 digits, and fireball.
+# Inspect the page and adjust these selectors if needed.
+CARD_SELECTOR        = "[data-testid='result-card'], .result-card, li[data-result]"  # fallback options
+DATE_SELECTOR        = "[data-testid='draw-date'], .result-card__date, time"
+DRAW_LABEL_SELECTOR  = "[data-testid='draw-name'], .result-card__draw"
+PICK3_NUMS_SELECTOR  = "[data-testid='result-number'], .result-number, .result-card__numbers"
+FIREBALL_SELECTOR    = "[data-testid='fireball'], .fireball, .result-card__fireball"
+
+def wait_for_results(page, timeout=60000):
+    # Wait until at least one result card shows up
+    page.wait_for_selector(CARD_SELECTOR, timeout=timeout)
+
+def accept_cookies_if_present(page):
+    # Try a few common buttons; ignore errors
+    for sel in [
+        "button:has-text('Accept')",
+        "button:has-text('I Accept')",
+        "button:has-text('Agree')",
+        "button[aria-label*='accept' i]",
+        "#onetrust-accept-btn-handler",
+        "button:has-text('Got it')",
+    ]:
+        try:
+            el = page.query_selector(sel)
+            if el:
+                el.click()
+                page.wait_for_timeout(300)
+                return
+        except Exception:
+            pass
+
+def parse_card(card):
+    # date
+    date_text = (card.query_selector(DATE_SELECTOR).inner_text().strip()
+                 if card.query_selector(DATE_SELECTOR) else "")
+    # draw label
+    draw_text = (card.query_selector(DRAW_LABEL_SELECTOR).inner_text().strip()
+                 if card.query_selector(DRAW_LABEL_SELECTOR) else "")
+    # pick3 numbers (join only digits)
+    nums_text = ""
+    if card.query_selector(PICK3_NUMS_SELECTOR):
+        raw = card.query_selector(PICK3_NUMS_SELECTOR).inner_text()
+        digits = [c for c in raw if c.isdigit()]
+        # pad/trim to 3
+        if len(digits) < 3: digits = (["0"] * (3 - len(digits))) + digits
+        if len(digits) > 3: digits = digits[:3]
+        nums_text = "".join(digits)
+
+    # fireball (single digit)
+    fireball = ""
+    if card.query_selector(FIREBALL_SELECTOR):
+        raw_fb = card.query_selector(FIREBALL_SELECTOR).inner_text()
+        fb_digits = [c for c in raw_fb if c.isdigit()]
+        fireball = fb_digits[0] if fb_digits else ""
+
+    return {
+        "date_text": date_text,
+        "draw_text": draw_text,
+        "pick3": nums_text,
+        "fireball": fireball,
+    }
+
+def scrape_latest_cards(max_retries=2):
     """
-    Use Playwright to render the page and collect the top few result 'cards'.
-    We’ll take the first ~4 logical blocks and parse them with regex.
+    Returns a list of items like:
+    [
+      {"date_text": "...", "draw_text": "Midday", "pick3": "123", "fireball": "4"},
+      ...
+    ]
     """
-    results = []
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context()
-        page = context.new_page()
-        page.goto(URL, timeout=60000)
-        # wait for any result containers; try a few generic selectors
-        page.wait_for_load_state("networkidle")
-        # give a little extra time for dynamic content (Cloudflare/JS)
-        time.sleep(3)
+    for attempt in range(1, max_retries + 1):
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+                context = browser.new_context(
+                    user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                "Chrome/124.0.0.0 Safari/537.36"),
+                    locale="en-US",
+                    timezone_id="America/Chicago",   # IL local time
+                    viewport={"width": 1280, "height": 1600},
+                )
 
-        # Grab big text blobs from the page and split into blocks by double linebreaks
-        text = page.inner_text("body")
-        blocks = re.split(r"\n\s*\n", text)
+                # Block heavy resources that aren't needed
+                context.route("**/*", lambda route: (
+                    route.abort()
+                    if any(x in route.request.url.lower() for x in [
+                        "doubleclick", "googletagmanager", "gtm.js",
+                        "analytics", "hotjar", "facebook", "adservice",
+                        ".mp4", ".webm", ".gif", ".svg", ".ttf", ".woff", ".woff2"
+                    ])
+                    else route.continue_()
+                ))
 
-        # Parse each block; keep first few plausible ones
-        for b in blocks:
-            parsed = parse_text_block(b)
-            if parsed:
-                results.append(parsed)
-            if len(results) >= 6:  # enough (latest few entries)
-                break
+                page = context.new_page()
+                page.set_default_timeout(60000)  # 60s default per action
 
-        browser.close()
-    return results
+                # Go to the page; don't wait for networkidle (often never happens)
+                page.goto(PICK3_URL, wait_until="domcontentloaded", timeout=60000)
+
+                # Handle cookie banner if it pops
+                accept_cookies_if_present(page)
+
+                # Explicitly wait for the result cards
+                wait_for_results(page, timeout=60000)
+
+                # Grab cards
+                cards = page.query_selector_all(CARD_SELECTOR)
+                items = [parse_card(c) for c in cards]
+
+                browser.close()
+
+                # Basic sanity check
+                if not items:
+                    raise RuntimeError("No result cards found after selector wait.")
+
+                return items
+
+        except PWTimeout as e:
+            if attempt == max_retries:
+                raise
+            # small backoff + retry
+            # (site may be slow or first hit blocked by a challenge)
+            # you can also add page.reload() in a single attempt if you prefer
+        except Exception as e:
+            if attempt == max_retries:
+                raise
+        # Wait a bit before retrying
+        import time as _t
+        _t.sleep(2)
+
+    return []
+
 
 def main():
     gc = get_gspread_client()
