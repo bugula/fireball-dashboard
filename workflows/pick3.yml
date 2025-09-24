@@ -1,35 +1,11 @@
-name: Grab Illinois Pick 3
+name: Pick3 Test
 
 on:
-  schedule:
-    - cron: "*/15 * * * *"   # every 15 minutes (idempotent script avoids dupes)
-  workflow_dispatch: {}       # allow manual runs from the Actions tab
+  workflow_dispatch: {}   # enables the "Run workflow" button
 
 jobs:
-  run:
+  hello:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Python deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      # ✅ This installs the headless Chromium binary + OS deps Playwright needs
-      - name: Install Playwright browsers
-        run: |
-          python -m playwright install --with-deps chromium
-
-      - name: Run scraper
-        env:
-          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-        run: |
-          python scrape_and_update.py
+      - name: Say hi
+        run: echo "Hello from Actions"
