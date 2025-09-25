@@ -220,22 +220,62 @@ def accept_cookies_if_present(page):
             pass
 
 def parse_card(card):
-    # date text (we’ll also regex-scan the whole card text as a fallback)
-    date_text = _first_text(card, DATE_CANDIDATES)
+    """
+    Try hard to extract fields from a result card.
+    We avoid padding; if we can't find real digits, we return None.
+    """
+    # Prefer inner_text; if empty, fall back to text_content (can include hidden)
+    def safe_text(el):
+        try:
+            t = el.inner_text().strip()
+            if t:
+                return t
+        except Exception:
+            pass
+        try:
+            t = el.text_content().strip()
+            return t or ""
+        except Exception:
+            return ""
 
-    # draw label
-    draw_text = normalize_draw_type(_first_text(card, DRAW_LABEL_CANDIDATES))
+    # Attempt via targeted sub-elements
+    date_text = ""
+    for sel in DATE_CANDIDATES:
+        q = card.query_selector(sel)
+        if q:
+            date_text = safe_text(q)
+            if date_text:
+                break
 
-    # pick3 numbers (3 digits)
-    pick_text = _first_text(card, PICK3_NUMS_CANDIDATES)
-    pick_digits = _digits(pick_text, n=3)
+    draw_text = ""
+    for sel in DRAW_LABEL_CANDIDATES:
+        q = card.query_selector(sel)
+        if q:
+            draw_text = safe_text(q)
+            if draw_text:
+                break
+    draw_text = normalize_draw_type(draw_text)
 
-    # fireball (1 digit)
-    fb_text = _first_text(card, FIREBALL_CANDIDATES)
-    fb_digits = _digits(fb_text, n=1)
+    pick_text = ""
+    for sel in PICK3_NUMS_CANDIDATES:
+        q = card.query_selector(sel)
+        if q:
+            pick_text = safe_text(q)
+            if pick_text:
+                break
+    pick_digits = [c for c in pick_text if c.isdigit()]
 
-    # Fallbacks using card’s full text
-    full = (card.inner_text() or "").strip()
+    fb_text = ""
+    for sel in FIREBALL_CANDIDATES:
+        q = card.query_selector(sel)
+        if q:
+            fb_text = safe_text(q)
+            if fb_text:
+                break
+    fb_digits = [c for c in fb_text if c.isdigit()]
+
+    # Fallback: scan the entire card text (sometimes markup is odd)
+    full = safe_text(card)
     if not date_text:
         mdate = DATE_RE.search(full)
         if mdate:
@@ -247,14 +287,32 @@ def parse_card(card):
         elif re.search(r"\beve(ning)?\b", full, re.I):
             draw_text = "Evening"
 
+    if len(pick_digits) < 3:
+        pick_digits = re.findall(r"\b(\d)\b", full)  # spaced digits
+    if len(pick_digits) < 3:
+        # Try any 3 consecutive digits in the block
+        m = re.search(r"(\d)[^\d]{0,3}(\d)[^\d]{0,3}(\d)", full)
+        if m:
+            pick_digits = [m.group(1), m.group(2), m.group(3)]
+
+    if len(fb_digits) < 1:
+        mfb = re.search(r"Fireball[:\s\-]*\s*(\d)", full, re.I)
+        if mfb:
+            fb_digits = [mfb.group(1)]
+
+    # Validate: must have date, draw, 3 pick digits, and 1 fireball digit
+    if not (date_text and draw_text in ("Midday", "Evening") and len(pick_digits) >= 3 and len(fb_digits) >= 1):
+        return None
+
     return {
-        "date_str": date_text,     # <- upsert() expects date_str
+        "date_str": date_text,
         "draw": draw_text,
-        "num1": int(pick_digits[0]) if len(pick_digits) >= 1 else 0,
-        "num2": int(pick_digits[1]) if len(pick_digits) >= 2 else 0,
-        "num3": int(pick_digits[2]) if len(pick_digits) >= 3 else 0,
-        "fireball": (fb_digits[0] if fb_digits else ""),
+        "num1": int(pick_digits[0]),
+        "num2": int(pick_digits[1]),
+        "num3": int(pick_digits[2]),
+        "fireball": fb_digits[0],
     }
+
 
 def scrape_latest_cards(max_retries=2):
     """
