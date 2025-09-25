@@ -1,6 +1,6 @@
 # scrape_and_update.py
 import os, json, re, time, traceback
-from datetime import datetime
+from datetime import datetime, time as dtime
 import pytz
 
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
@@ -92,9 +92,13 @@ def est_today():
     est = pytz.timezone("US/Eastern")
     return datetime.now(est).date()
 
+# Chicago (= site’s local) clock
+CT = pytz.timezone("America/Chicago")
+def chicago_now():
+    return datetime.now(CT)
+
 def chicago_today():
-    tz = pytz.timezone("America/Chicago")
-    return datetime.now(tz).date()
+    return chicago_now().date()
 
 def to_date(datestr: str):
     return datetime.strptime(datestr, "%B %d, %Y").date()
@@ -151,6 +155,82 @@ def upsert_latest(ws, items):
 
     print(f"[upsert] Total appended: {appended}")
     return appended
+
+# ---------------------------------------------------------------------
+# Assumption fallback (maps 1 new row to the one missing slot)
+# ---------------------------------------------------------------------
+def expected_missing_slots(ws):
+    """
+    Look at the sheet and return a list of (date, draw) the app is still missing
+    for today (and possibly the obvious next one). Ordered by likelihood.
+    """
+    df = pd.DataFrame(ws.get_all_records())
+    today = chicago_today()
+    if df.empty:
+        return [(today, "Midday")]  # bootstrap
+
+    df.columns = df.columns.str.strip().str.lower()
+    if not {"date","draw"}.issubset(df.columns):
+        return [(today, "Midday")]
+
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    df["draw"] = df["draw"].astype(str).str.strip().str.title()
+
+    def have(d, draw):
+        return ((df["date"] == d) & (df["draw"] == draw)).any()
+
+    have_mid_today = have(today, "Midday")
+    have_eve_today = have(today, "Evening")
+
+    now_ct = chicago_now().time()
+    midday_cut  = dtime(13, 35)  # 1:35pm CT
+    evening_cut = dtime(22, 15)  # 10:15pm CT
+
+    missing = []
+
+    # After a cutoff, if we don't have the slot, that's expected next
+    if now_ct >= midday_cut and not have_mid_today:
+        missing.append((today, "Midday"))
+
+    if now_ct >= evening_cut and not have_eve_today:
+        missing.append((today, "Evening"))
+
+    # Between cuts, if Midday exists but Evening doesn't, Evening is expected
+    if have_mid_today and not have_eve_today:
+        missing.append((today, "Evening"))
+
+    # De-dup while preserving order
+    seen = set()
+    dedup = []
+    for tup in missing:
+        if tup not in seen:
+            seen.add(tup)
+            dedup.append(tup)
+    return dedup
+
+def assign_by_assumption(scraped_items, ws):
+    """
+    If exactly one slot is clearly missing and exactly one scraped item
+    has valid digits (even without date/draw labels), assign it to that slot.
+    Returns [one_completed_item] or [].
+    """
+    usable = []
+    for it in scraped_items:
+        n1, n2, n3 = it.get("num1"), it.get("num2"), it.get("num3")
+        fb = str(it.get("fireball", "")).strip()
+        if isinstance(n1, int) and isinstance(n2, int) and isinstance(n3, int) and fb.isdigit():
+            usable.append(it)
+
+    missing = expected_missing_slots(ws)
+    if len(missing) != 1 or len(usable) != 1:
+        return []
+
+    target_date, target_draw = missing[0]
+    it = usable[0].copy()
+    it["date_str"] = it.get("date_str") or target_date.strftime("%B %d, %Y")
+    it["draw"] = target_draw
+    print(f"[assume] Assigned scraped row to {(target_date, target_draw)}")
+    return [it]
 
 # ---------------------------------------------------------------------
 # Playwright scraping helpers
@@ -224,7 +304,6 @@ def parse_card(card):
     Try hard to extract fields from a result card.
     We avoid padding; if we can't find real digits, we return None.
     """
-    # Prefer inner_text; if empty, fall back to text_content (can include hidden)
     def safe_text(el):
         try:
             t = el.inner_text().strip()
@@ -290,7 +369,6 @@ def parse_card(card):
     if len(pick_digits) < 3:
         pick_digits = re.findall(r"\b(\d)\b", full)  # spaced digits
     if len(pick_digits) < 3:
-        # Try any 3 consecutive digits in the block
         m = re.search(r"(\d)[^\d]{0,3}(\d)[^\d]{0,3}(\d)", full)
         if m:
             pick_digits = [m.group(1), m.group(2), m.group(3)]
@@ -300,7 +378,7 @@ def parse_card(card):
         if mfb:
             fb_digits = [mfb.group(1)]
 
-    # Validate: must have date, draw, 3 pick digits, and 1 fireball digit
+    # Validate
     if not (date_text and draw_text in ("Midday", "Evening") and len(pick_digits) >= 3 and len(fb_digits) >= 1):
         return None
 
@@ -312,7 +390,6 @@ def parse_card(card):
         "num3": int(pick_digits[2]),
         "fireball": fb_digits[0],
     }
-
 
 def scrape_latest_cards(max_retries=2):
     for attempt in range(1, max_retries + 1):
@@ -378,7 +455,6 @@ def scrape_latest_cards(max_retries=2):
                 items = []
                 for i, c in enumerate(cards[:20], 1):
                     it = parse_card(c)
-                    # For debugging: short HTML sample
                     if not it:
                         try:
                             snippet = (c.inner_html() or "")[:240].replace("\n", " ")
@@ -417,7 +493,7 @@ def main():
         print("No items parsed; nothing to upsert.")
         return
 
-    # Cleaning / completeness
+    # Strict cleaning path: needs date_str + draw label
     cleaned = []
     for it in items:
         ds = (it.get("date_str") or "").strip()
@@ -435,12 +511,19 @@ def main():
         cleaned.append(it)
 
     print(f"[filter] Kept {len(cleaned)} rows after completeness checks.")
-    if not cleaned:
-        print("After cleaning, no usable rows; nothing to upsert.")
-        return
 
-    # Only keep today/yesterday (allow up to 2 days to be safe) & log what we keep
-    today = est_today()
+    # If strict path produced nothing, try assumption fallback
+    if not cleaned:
+        print("[assume] Trying assumption-based assignment…")
+        assumed = assign_by_assumption(items, ws)
+        if assumed:
+            cleaned = assumed
+        else:
+            print("[assume] No unambiguous slot to assign — aborting safely.")
+            return
+
+    # Only keep today/yesterday (allow up to 2 days) per Chicago time
+    today = chicago_today()
     keep = []
     for it in cleaned:
         try:
@@ -450,7 +533,7 @@ def main():
             continue
         delta = (today - d).days
         print(f"[filter] Row {it['draw']} {it['date_str']} → {d} (delta={delta})")
-        if delta in (0, 1, 2):  # allow up to 2 days just in case of late posting
+        if delta in (0, 1, 2):  # up to 2 days just in case of late posting
             keep.append(it)
 
     print(f"[filter] Rows kept for upsert: {len(keep)}")
@@ -458,7 +541,6 @@ def main():
         print("Parsed items didn’t match today/yesterday; nothing to upsert.")
         return
 
-    # Append to sheet (and print how many appended)
     appended = upsert_latest(ws, keep)
     print(f"[main] Done. Appended rows: {appended}")
 
