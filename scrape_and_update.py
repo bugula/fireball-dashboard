@@ -116,14 +116,17 @@ def already_in_sheet(ws, row):
 
 def upsert_latest(ws, items):
     """
-    items: list of parsed dicts (each: date_str, draw, num1, num2, num3, fireball)
+    items: list of dicts (date_str, draw, num1, num2, num3, fireball)
     Convert to (date, draw) and append only if not present.
     """
+    appended = 0
     for it in items:
         try:
             d = to_date(it["date_str"])
         except Exception:
+            print(f"[upsert] Bad date: {it.get('date_str')}, skipping")
             continue
+
         row_obj = {
             "date": d,
             "draw": it["draw"],
@@ -132,6 +135,7 @@ def upsert_latest(ws, items):
             "num3": it["num3"],
             "fireball": it["fireball"],
         }
+
         if not already_in_sheet(ws, row_obj):
             ws.append_row([
                 str(row_obj["date"]),
@@ -141,9 +145,14 @@ def upsert_latest(ws, items):
                 row_obj["num3"],
                 row_obj["fireball"],
             ])
-            print(f"Appended: {row_obj['date']} {row_obj['draw']} {row_obj['num1']}{row_obj['num2']}{row_obj['num3']} + FB {row_obj['fireball']}")
+            appended += 1
+            print(f"[upsert] Appended: {row_obj['date']} {row_obj['draw']} {row_obj['num1']}{row_obj['num2']}{row_obj['num3']} + FB {row_obj['fireball']}")
         else:
-            print(f"Exists:   {row_obj['date']} {row_obj['draw']} — skipped")
+            print(f"[upsert] Exists already: {row_obj['date']} {row_obj['draw']} — skipped")
+
+    print(f"[upsert] Total appended: {appended}")
+    return appended
+
 
 # ---------------------------------------------------------------------
 # Playwright scraping helpers
@@ -259,6 +268,7 @@ def scrape_latest_cards(max_retries=2):
     """
     for attempt in range(1, max_retries + 1):
         try:
+            print(f"[scrape] Attempt {attempt}...")
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
                 context = browser.new_context(
@@ -269,38 +279,62 @@ def scrape_latest_cards(max_retries=2):
                     ),
                     locale="en-US",
                     timezone_id="America/Chicago",   # IL time
-                    viewport={"width": 1280, "height": 2200},
+                    viewport={"width": 1280, "height": 2400},
                 )
 
                 # Block heavy 3rd-party noise
                 context.route("**/*", lambda route: (
                     route.abort()
                     if any(x in route.request.url.lower() for x in [
-                        "doubleclick", "googletagmanager", "gtm.js", "analytics",
-                        "hotjar", "facebook", "adservice",
-                        ".mp4", ".webm", ".gif", ".svg", ".ttf", ".woff", ".woff2"
+                        "doubleclick","googletagmanager","gtm.js","analytics",
+                        "hotjar","facebook","adservice",
+                        ".mp4",".webm",".gif",".svg",".ttf",".woff",".woff2"
                     ])
                     else route.continue_()
                 ))
 
-                # (Optional) console debug
-                context.on("console", lambda msg: print("[console]", msg.type, msg.text))
-
                 page = context.new_page()
                 page.set_default_timeout(60000)
                 page.goto(PICK3_URL, wait_until="domcontentloaded", timeout=60000)
-
                 accept_cookies_if_present(page)
 
-                used_selector = wait_for_results(page, timeout=60000)
+                # Nudge lazy content to render
+                try:
+                    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    page.wait_for_timeout(750)
+                    page.evaluate("window.scrollTo(0, 0)")
+                except Exception:
+                    pass
 
-                cards = page.query_selector_all(used_selector)
-                if not cards:
-                    # Safety net: try all candidates
-                    for sel in CARD_SELECTOR_CANDIDATES:
-                        cards = page.query_selector_all(sel)
-                        if cards:
+                # Prefer scoping to a Pick 3 section if present
+                pick3_section = None
+                for sel in ["section:has-text('Pick 3')", "section:has-text('Pick3')", "main"]:
+                    try:
+                        pick3_section = page.query_selector(sel)
+                        if pick3_section:
                             break
+                    except Exception:
+                        continue
+
+                used_selector = None
+                if pick3_section:
+                    # Try to find result cards inside the Pick 3 area first
+                    for sel in CARD_SELECTOR_CANDIDATES:
+                        els = pick3_section.query_selector_all(sel)
+                        if els:
+                            cards = els
+                            used_selector = f"[Pick3 scope] {sel}"
+                            break
+                    # If that failed, fall back to global wait/scan
+                    if not used_selector:
+                        used_selector = wait_for_results(page, timeout=60000)
+                        cards = page.query_selector_all(used_selector)
+                else:
+                    used_selector = wait_for_results(page, timeout=60000)
+                    cards = page.query_selector_all(used_selector)
+
+                print(f"[scrape] Using selector: {used_selector}")
+                print(f"[scrape] Found {len(cards)} potential cards")
 
                 if not cards:
                     debug_dump(page, "cards-empty")
@@ -308,14 +342,21 @@ def scrape_latest_cards(max_retries=2):
 
                 items = [parse_card(c) for c in cards]
 
-                # Filter to rows that have a fireball digit and a 3-digit Pick 3
+                # Log raw parsed for visibility
+                for i, it in enumerate(items[:10], 1):
+                    print(f"[scrape] Raw#{i}: {it}")
+
+                # Keep rows that have all critical pieces
                 filtered = [
                     it for it in items
-                    if it.get("fireball", "").isdigit()
+                    if it.get("date_str")
+                    and it.get("draw") in ("Midday", "Evening")
                     and isinstance(it.get("num1"), int)
                     and isinstance(it.get("num2"), int)
                     and isinstance(it.get("num3"), int)
+                    and str(it.get("fireball", "")).isdigit()
                 ]
+                print(f"[scrape] Usable rows after validation: {len(filtered)}")
 
                 browser.close()
 
@@ -323,22 +364,17 @@ def scrape_latest_cards(max_retries=2):
                     debug_dump(page, "parsed-empty")
                     raise RuntimeError("Parsed zero usable rows; HTML dumped for inspection.")
 
-                # --- Step 2: Debug print a few rows so you can see what we parsed ---
-                print("[scrape] Parsed rows (up to 6):")
-                for it in filtered[:6]:
-                    print(f"  date_str={it.get('date_str')!r}, draw={it.get('draw')!r}, "
-                          f"pick3={it.get('num1')}{it.get('num2')}{it.get('num3')}, fb={it.get('fireball')!r}")
-
                 return filtered
 
         except Exception as e:
-            print(f"[scrape] Attempt {attempt} failed: {e}")
+            print(f"[scrape] Attempt {attempt} FAILED: {e}")
             traceback.print_exc()
             if attempt == max_retries:
                 raise
-            time.sleep(2)  # brief backoff
+            time.sleep(2)
 
     return []
+
 
 # ---------------------------------------------------------------------
 # Main
@@ -376,27 +412,28 @@ def main():
         print("After cleaning, no usable rows; nothing to upsert.")
         return
 
-    # Only keep draws from Chicago 'today' or the prior 2 days
-    today_chi = chicago_today()
+    # Only keep today/yesterday (extend to 2 days to be safe) & log what we keep
+    today = est_today()
     keep = []
-    for it in cleaned:
+    for it in items:
         try:
             d = to_date(it["date_str"])
         except Exception:
+            print(f"[filter] Could not parse date_str: {it.get('date_str')}")
             continue
-        delta = (today_chi - d).days
-        if 0 <= delta <= 2:
+        delta = (today - d).days
+        print(f"[filter] Row {it['draw']} {it['date_str']} → {d} (delta={delta})")
+        if delta in (0, 1, 2):  # allow up to 2 days just in case of late posting
             keep.append(it)
 
-    print(f"[filter] Kept {len(keep)} rows within 0–2 days of {today_chi} (America/Chicago).")
-    for it in keep[:6]:
-        print(f"  -> {it['date_str']} {it['draw']} {it['num1']}{it['num2']}{it['num3']} + FB {it['fireball']}")
-
+    print(f"[filter] Rows kept for upsert: {len(keep)}")
     if not keep:
-        print("Parsed items didn’t match date window; nothing to upsert.")
+        print("Parsed items didn’t match today/yesterday; nothing to upsert.")
         return
 
-    upsert_latest(ws, keep)
+
+appended = upsert_latest(ws, keep)
+print(f"[main] Done. Appended rows: {appended}")
 
 if __name__ == "__main__":
     main()
