@@ -92,7 +92,6 @@ def est_today():
     est = pytz.timezone("US/Eastern")
     return datetime.now(est).date()
 
-# --- Step 1: Chicago clock helper (use site’s local time) ---
 def chicago_today():
     tz = pytz.timezone("America/Chicago")
     return datetime.now(tz).date()
@@ -152,7 +151,6 @@ def upsert_latest(ws, items):
 
     print(f"[upsert] Total appended: {appended}")
     return appended
-
 
 # ---------------------------------------------------------------------
 # Playwright scraping helpers
@@ -231,12 +229,10 @@ def parse_card(card):
     # pick3 numbers (3 digits)
     pick_text = _first_text(card, PICK3_NUMS_CANDIDATES)
     pick_digits = _digits(pick_text, n=3)
-    pick3 = "".join(pick_digits)
 
     # fireball (1 digit)
     fb_text = _first_text(card, FIREBALL_CANDIDATES)
     fb_digits = _digits(fb_text, n=1)
-    fireball = fb_digits[0] if fb_digits else ""
 
     # Fallbacks using card’s full text
     full = (card.inner_text() or "").strip()
@@ -252,12 +248,12 @@ def parse_card(card):
             draw_text = "Evening"
 
     return {
-        "date_str": date_text,     # <- IMPORTANT: your upsert() expects date_str
+        "date_str": date_text,     # <- upsert() expects date_str
         "draw": draw_text,
         "num1": int(pick_digits[0]) if len(pick_digits) >= 1 else 0,
         "num2": int(pick_digits[1]) if len(pick_digits) >= 2 else 0,
         "num3": int(pick_digits[2]) if len(pick_digits) >= 3 else 0,
-        "fireball": fireball,
+        "fireball": (fb_digits[0] if fb_digits else ""),
     }
 
 def scrape_latest_cards(max_retries=2):
@@ -375,7 +371,6 @@ def scrape_latest_cards(max_retries=2):
 
     return []
 
-
 # ---------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------
@@ -388,8 +383,7 @@ def main():
         print("No items parsed; nothing to upsert.")
         return
 
-    # --- Step 3: Robust cleaning + Chicago 0–2 day window ---
-    # Keep only rows that look complete + have Midday/Evening explicitly
+    # Cleaning / completeness
     cleaned = []
     for it in items:
         ds = (it.get("date_str") or "").strip()
@@ -407,15 +401,14 @@ def main():
         cleaned.append(it)
 
     print(f"[filter] Kept {len(cleaned)} rows after completeness checks.")
-
     if not cleaned:
         print("After cleaning, no usable rows; nothing to upsert.")
         return
 
-    # Only keep today/yesterday (extend to 2 days to be safe) & log what we keep
+    # Only keep today/yesterday (allow up to 2 days to be safe) & log what we keep
     today = est_today()
     keep = []
-    for it in items:
+    for it in cleaned:
         try:
             d = to_date(it["date_str"])
         except Exception:
@@ -431,9 +424,9 @@ def main():
         print("Parsed items didn’t match today/yesterday; nothing to upsert.")
         return
 
-
-appended = upsert_latest(ws, keep)
-print(f"[main] Done. Appended rows: {appended}")
+    # Append to sheet (and print how many appended)
+    appended = upsert_latest(ws, keep)
+    print(f"[main] Done. Appended rows: {appended}")
 
 if __name__ == "__main__":
     main()
