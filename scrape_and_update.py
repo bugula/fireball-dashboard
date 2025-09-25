@@ -68,4 +68,8 @@ def get_gspread_client():
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
     ]
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(creds_json), scop
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(
+        json.loads(creds_json),
+        scope
+    )
+    return gspread.authorize(creds)
