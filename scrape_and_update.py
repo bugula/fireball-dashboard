@@ -11,59 +11,50 @@ import pandas as pd
 # ---------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------
-PICK3_URL = "https://www.illinoislottery.com/dbg/results/pick3"
+BASE_URL   = "https://www.illinoislottery.com"
+PICK3_URL  = f"{BASE_URL}/dbg/results/pick3"
 
 # Broad selector candidates (site markup can change)
 CARD_SELECTOR_CANDIDATES = [
-    "[data-testid='result-card']",
-    ".result-card",
-    "li[data-result]",
-    "li:has([data-testid='result-number'])",
-    "article:has([data-testid='result-number'])",
-    "section:has-text('Pick 3') li",
-    "section:has-text('Pick 3') article",
+    "a.dbg-results__result",
+    "li[data-result] a[href*='/dbg/results/pick3/draw/']",
+    "section:has-text('Pick 3') a[href*='/dbg/results/pick3/draw/']",
+    "a[href*='/dbg/results/pick3/draw/']",
 ]
 
-DATE_CANDIDATES = [
+# On the DETAIL page we try these:
+DETAIL_DATE_SEL   = [
     "[data-testid='draw-date']",
-    ".result-card__date",
-    "time[datetime]",
-    "time",
+    ".dbg-draw-header__date",
+    "time[datetime]", "time"
 ]
-
-DRAW_LABEL_CANDIDATES = [
+DETAIL_DRAW_SEL   = [
     "[data-testid='draw-name']",
-    ".result-card__draw",
-    "span:has-text('Midday')",
-    "span:has-text('Evening')",
+    ".dbg-draw-header__draw",
+    "h1,h2,h3:has-text('Midday')",
+    "h1,h2,h3:has-text('Evening')",
     "*:text('Midday')",
     "*:text('Evening')",
 ]
-
-PICK3_NUMS_CANDIDATES = [
+DETAIL_P3_SEL     = [
     "[data-testid='result-number']",
-    ".result-number",
-    ".result-card__numbers",
-    "[class*='number']",
+    ".dbg-winning-number",
+    ".winning-number",
+    ".dbg-winning-numbers, .winning-numbers"
 ]
-
-FIREBALL_CANDIDATES = [
+DETAIL_FIREBALL_SEL = [
     "[data-testid='fireball']",
-    ".fireball",
-    ".result-card__fireball",
-    "span:has-text('Fireball')",
-    "div:has-text('Fireball')",
+    ".dbg-fireball, .fireball",
+    "*:has-text('Fireball')"
 ]
 
 # ---------------------------------------------------------------------
 # Google Sheets auth
 # ---------------------------------------------------------------------
 def get_gspread_client():
-    # Expect the whole service-account JSON in env var GCP_SERVICE_ACCOUNT
     creds_json = os.environ.get("GCP_SERVICE_ACCOUNT")
     if not creds_json:
         raise RuntimeError("Missing GCP_SERVICE_ACCOUNT secret.")
-
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
@@ -72,9 +63,7 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 def open_sheets(gc):
-    # Open by title; matches your app
-    data_ws = gc.open("fireball_data").sheet1
-    return data_ws
+    return gc.open("fireball_data").sheet1
 
 # ---------------------------------------------------------------------
 # Helpers: parsing & dates
@@ -82,46 +71,33 @@ def open_sheets(gc):
 MONTHS = r"(January|February|March|April|May|June|July|August|September|October|November|December)"
 DATE_RE = re.compile(rf"{MONTHS}\s+\d{{1,2}},\s+\d{{4}}", re.I)
 
+CT = pytz.timezone("America/Chicago")
+def chicago_now():
+    return datetime.now(CT)
+def chicago_today():
+    return chicago_now().date()
+
 def normalize_draw_type(s: str) -> str:
     s = (s or "").strip().lower()
     if "mid" in s: return "Midday"
     if "eve" in s: return "Evening"
     return s.title() if s else ""
 
-def est_today():
-    est = pytz.timezone("US/Eastern")
-    return datetime.now(est).date()
-
-# Chicago (= site’s local) clock
-CT = pytz.timezone("America/Chicago")
-def chicago_now():
-    return datetime.now(CT)
-
-def chicago_today():
-    return chicago_now().date()
-
 def to_date(datestr: str):
     return datetime.strptime(datestr, "%B %d, %Y").date()
 
 def already_in_sheet(ws, row):
-    """Check if (date, draw) already present in the sheet."""
     df = pd.DataFrame(ws.get_all_records())
     if df.empty:
         return False
     df.columns = df.columns.str.strip().str.lower()
-    if not {"date", "draw"}.issubset(set(df.columns)):
+    if not {"date","draw"}.issubset(df.columns):
         return False
     df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
     df["draw"] = df["draw"].astype(str).str.strip().str.title()
-    want_date = row["date"]
-    want_draw = row["draw"]
-    return ((df["date"] == want_date) & (df["draw"] == want_draw)).any()
+    return ((df["date"] == row["date"]) & (df["draw"] == row["draw"])).any()
 
 def upsert_latest(ws, items):
-    """
-    items: list of dicts (date_str, draw, num1, num2, num3, fireball)
-    Convert to (date, draw) and append only if not present.
-    """
     appended = 0
     for it in items:
         try:
@@ -129,7 +105,6 @@ def upsert_latest(ws, items):
         except Exception:
             print(f"[upsert] Bad date: {it.get('date_str')}, skipping")
             continue
-
         row_obj = {
             "date": d,
             "draw": it["draw"],
@@ -138,7 +113,6 @@ def upsert_latest(ws, items):
             "num3": it["num3"],
             "fireball": it["fireball"],
         }
-
         if not already_in_sheet(ws, row_obj):
             ws.append_row([
                 str(row_obj["date"]),
@@ -152,134 +126,76 @@ def upsert_latest(ws, items):
             print(f"[upsert] Appended: {row_obj['date']} {row_obj['draw']} {row_obj['num1']}{row_obj['num2']}{row_obj['num3']} + FB {row_obj['fireball']}")
         else:
             print(f"[upsert] Exists already: {row_obj['date']} {row_obj['draw']} — skipped")
-
     print(f"[upsert] Total appended: {appended}")
     return appended
 
-# ---------------------------------------------------------------------
-# Assumption fallback (maps 1 new row to the one missing slot)
-# ---------------------------------------------------------------------
+# ---------- Assumption fallback (1 missing slot) ----------
 def expected_missing_slots(ws):
-    """
-    Look at the sheet and return a list of (date, draw) the app is still missing
-    for today (and possibly the obvious next one). Ordered by likelihood.
-    """
     df = pd.DataFrame(ws.get_all_records())
     today = chicago_today()
     if df.empty:
         return [(today, "Midday")]  # bootstrap
-
     df.columns = df.columns.str.strip().str.lower()
     if not {"date","draw"}.issubset(df.columns):
         return [(today, "Midday")]
-
     df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
     df["draw"] = df["draw"].astype(str).str.strip().str.title()
-
-    def have(d, draw):
-        return ((df["date"] == d) & (df["draw"] == draw)).any()
+    def have(d, draw): return ((df["date"] == d) & (df["draw"] == draw)).any()
 
     have_mid_today = have(today, "Midday")
     have_eve_today = have(today, "Evening")
-
     now_ct = chicago_now().time()
     midday_cut  = dtime(13, 35)  # 1:35pm CT
     evening_cut = dtime(22, 15)  # 10:15pm CT
 
     missing = []
-
-    # After a cutoff, if we don't have the slot, that's expected next
     if now_ct >= midday_cut and not have_mid_today:
         missing.append((today, "Midday"))
-
     if now_ct >= evening_cut and not have_eve_today:
         missing.append((today, "Evening"))
-
-    # Between cuts, if Midday exists but Evening doesn't, Evening is expected
     if have_mid_today and not have_eve_today:
         missing.append((today, "Evening"))
 
-    # De-dup while preserving order
-    seen = set()
-    dedup = []
-    for tup in missing:
-        if tup not in seen:
-            seen.add(tup)
-            dedup.append(tup)
+    # de-dup, keep order
+    seen, dedup = set(), []
+    for m in missing:
+        if m not in seen:
+            seen.add(m); dedup.append(m)
     return dedup
 
 def assign_by_assumption(scraped_items, ws):
-    """
-    If exactly one slot is clearly missing and exactly one scraped item
-    has valid digits (even without date/draw labels), assign it to that slot.
-    Returns [one_completed_item] or [].
-    """
     usable = []
     for it in scraped_items:
         n1, n2, n3 = it.get("num1"), it.get("num2"), it.get("num3")
-        fb = str(it.get("fireball", "")).strip()
-        if isinstance(n1, int) and isinstance(n2, int) and isinstance(n3, int) and fb.isdigit():
+        fb = str(it.get("fireball","")).strip()
+        # allow missing date/draw here; just check digits
+        if isinstance(n1,int) and isinstance(n2,int) and isinstance(n3,int) and fb.isdigit():
             usable.append(it)
-
     missing = expected_missing_slots(ws)
     if len(missing) != 1 or len(usable) != 1:
         return []
-
     target_date, target_draw = missing[0]
     it = usable[0].copy()
     it["date_str"] = it.get("date_str") or target_date.strftime("%B %d, %Y")
-    it["draw"] = target_draw
+    it["draw"]     = it.get("draw")     or target_draw
     print(f"[assume] Assigned scraped row to {(target_date, target_draw)}")
     return [it]
 
 # ---------------------------------------------------------------------
 # Playwright scraping helpers
 # ---------------------------------------------------------------------
-def _first_text(el, selectors):
-    """Return the first non-empty inner_text found by trying selectors on this element."""
-    for sel in selectors:
-        try:
-            q = el.query_selector(sel)
-            if q:
-                t = q.inner_text().strip()
-                if t:
-                    return t
-        except Exception:
-            pass
-    return ""
-
-def _digits(s, n=None):
-    d = [c for c in (s or "") if c.isdigit()]
-    if n is not None:
-        if len(d) < n:
-            d = (["0"] * (n - len(d))) + d
-        if len(d) > n:
-            d = d[:n]
-    return d
-
-def debug_dump(page, label="debug"):
-    """Save HTML + screenshot to artifacts/ for inspection on failures."""
+def safe_text(el):
+    if not el: return ""
     try:
-        os.makedirs("artifacts", exist_ok=True)
-        html_path = f"artifacts/{label}.html"
-        img_path  = f"artifacts/{label}.png"
-        page.screenshot(path=img_path, full_page=True)
-        with open(html_path, "w", encoding="utf-8") as f:
-            f.write(page.content())
-        print(f"[debug] Saved {html_path} and {img_path}")
-    except Exception as e:
-        print("[debug] Failed to dump artifacts:", e)
-
-def wait_for_results(page, timeout=60000):
-    """Try several card selectors; return the one that appeared."""
-    for sel in CARD_SELECTOR_CANDIDATES:
-        try:
-            page.wait_for_selector(sel, timeout=timeout, state="visible")
-            return sel
-        except PWTimeout:
-            continue
-    debug_dump(page, "no-cards")
-    raise PWTimeout(f"No result cards visible after {timeout}ms using candidates: {CARD_SELECTOR_CANDIDATES}")
+        t = el.inner_text().strip()
+        if t: return t
+    except Exception:
+        pass
+    try:
+        t = el.text_content().strip()
+        return t or ""
+    except Exception:
+        return ""
 
 def accept_cookies_if_present(page):
     for sel in [
@@ -291,115 +207,123 @@ def accept_cookies_if_present(page):
         "button:has-text('Got it')",
     ]:
         try:
-            el = page.query_selector(sel)
-            if el:
-                el.click()
+            btn = page.query_selector(sel)
+            if btn:
+                btn.click()
                 page.wait_for_timeout(300)
                 return
         except Exception:
             pass
 
-def parse_card(card):
-    """
-    Try hard to extract fields from a result card.
-    We avoid padding; if we can't find real digits, we return None.
-    """
-    def safe_text(el):
-        try:
-            t = el.inner_text().strip()
-            if t:
-                return t
-        except Exception:
-            pass
-        try:
-            t = el.text_content().strip()
-            return t or ""
-        except Exception:
-            return ""
+def collect_draw_links(page):
+    """Return absolute hrefs for recent Pick 3 draws on the LIST page."""
+    for sel in CARD_SELECTOR_CANDIDATES:
+        links = page.query_selector_all(sel)
+        if links:
+            hrefs = []
+            for a in links[:12]:  # first 12 rows is plenty
+                try:
+                    href = a.get_attribute("href") or ""
+                    if "/dbg/results/pick3/draw/" in href:
+                        if href.startswith("http"):
+                            hrefs.append(href)
+                        else:
+                            hrefs.append(BASE_URL + href)
+                except Exception:
+                    continue
+            if hrefs:
+                print(f"[links] Using selector {sel}: {len(hrefs)} links")
+                return hrefs
+    return []
 
-    # Attempt via targeted sub-elements
+def parse_detail_page(page):
+    """
+    Parse from a DRAW DETAIL page.
+    Returns dict or None.
+    """
+    # Date
     date_text = ""
-    for sel in DATE_CANDIDATES:
-        q = card.query_selector(sel)
-        if q:
-            date_text = safe_text(q)
-            if date_text:
-                break
-
-    draw_text = ""
-    for sel in DRAW_LABEL_CANDIDATES:
-        q = card.query_selector(sel)
-        if q:
-            draw_text = safe_text(q)
-            if draw_text:
-                break
-    draw_text = normalize_draw_type(draw_text)
-
-    pick_text = ""
-    for sel in PICK3_NUMS_CANDIDATES:
-        q = card.query_selector(sel)
-        if q:
-            pick_text = safe_text(q)
-            if pick_text:
-                break
-    pick_digits = [c for c in pick_text if c.isdigit()]
-
-    fb_text = ""
-    for sel in FIREBALL_CANDIDATES:
-        q = card.query_selector(sel)
-        if q:
-            fb_text = safe_text(q)
-            if fb_text:
-                break
-    fb_digits = [c for c in fb_text if c.isdigit()]
-
-    # Fallback: scan the entire card text (sometimes markup is odd)
-    full = safe_text(card)
+    for sel in DETAIL_DATE_SEL:
+        date_text = safe_text(page.query_selector(sel))
+        if date_text:
+            break
     if not date_text:
-        mdate = DATE_RE.search(full)
-        if mdate:
-            date_text = mdate.group(0)
+        mdate = DATE_RE.search(page.content())
+        if mdate: date_text = mdate.group(0)
 
+    # Draw type
+    draw_text = ""
+    for sel in DETAIL_DRAW_SEL:
+        t = safe_text(page.query_selector(sel))
+        if t:
+            draw_text = normalize_draw_type(t)
+            if draw_text in ("Midday","Evening"):
+                break
     if not draw_text:
-        if re.search(r"\bmid(day)?\b", full, re.I):
-            draw_text = "Midday"
-        elif re.search(r"\beve(ning)?\b", full, re.I):
-            draw_text = "Evening"
+        full = page.content()
+        if re.search(r"\bmid(day)?\b", full, re.I): draw_text = "Midday"
+        elif re.search(r"\beve(ning)?\b", full, re.I): draw_text = "Evening"
 
-    if len(pick_digits) < 3:
-        pick_digits = re.findall(r"\b(\d)\b", full)  # spaced digits
-    if len(pick_digits) < 3:
-        m = re.search(r"(\d)[^\d]{0,3}(\d)[^\d]{0,3}(\d)", full)
+    # Numbers: try to pull exactly 3 digits (many pages render as text somewhere)
+    nums = []
+    for sel in DETAIL_P3_SEL:
+        block = safe_text(page.query_selector(sel))
+        if block:
+            nums.extend([c for c in block if c.isdigit()])
+    if len(nums) < 3:
+        # ARIA/alt strings
+        html = page.content()
+        m = re.search(r"Winning(?:\s+)?Numbers?:?\s*([0-9][^\d]+[0-9][^\d]+[0-9])", html, re.I)
         if m:
-            pick_digits = [m.group(1), m.group(2), m.group(3)]
+            nums = re.findall(r"\d", m.group(1))
+    if len(nums) < 3:
+        # final fallback: scan all text for three digits near each other
+        m = re.search(r"(\d)[^\d]{0,3}(\d)[^\d]{0,3}(\d)", page.inner_text())
+        if m:
+            nums = [m.group(1), m.group(2), m.group(3)]
+    nums = nums[:3]
 
-    if len(fb_digits) < 1:
-        mfb = re.search(r"Fireball[:\s\-]*\s*(\d)", full, re.I)
+    # Fireball
+    fb = ""
+    for sel in DETAIL_FIREBALL_SEL:
+        block = safe_text(page.query_selector(sel))
+        if block:
+            fb_digits = re.findall(r"\d", block)
+            if fb_digits:
+                fb = fb_digits[0]
+                break
+    if not fb:
+        html = page.content()
+        mfb = re.search(r"Fireball[:\s\-]*\s*(\d)", html, re.I)
         if mfb:
-            fb_digits = [mfb.group(1)]
+            fb = mfb.group(1)
 
-    # Validate
-    if not (date_text and draw_text in ("Midday", "Evening") and len(pick_digits) >= 3 and len(fb_digits) >= 1):
-        return None
-
-    return {
-        "date_str": date_text,
-        "draw": draw_text,
-        "num1": int(pick_digits[0]),
-        "num2": int(pick_digits[1]),
-        "num3": int(pick_digits[2]),
-        "fireball": fb_digits[0],
-    }
+    if date_text and draw_text in ("Midday","Evening") and len(nums) == 3 and fb.isdigit():
+        return {
+            "date_str": date_text,
+            "draw": draw_text,
+            "num1": int(nums[0]),
+            "num2": int(nums[1]),
+            "num3": int(nums[2]),
+            "fireball": fb,
+        }
+    return None
 
 def scrape_latest_cards(max_retries=2):
+    """
+    Strategy:
+    1) Open list page, collect the draw links.
+    2) Visit top N detail pages and parse text (date/draw/numbers/fireball).
+    """
     for attempt in range(1, max_retries + 1):
         try:
-            print(f"[scrape] Attempt {attempt}...")
+            print(f"[scrape] Attempt {attempt}…")
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+                browser = p.chromium.launch(headless=True, args=["--no-sandbox","--disable-dev-shm-usage"])
                 context = browser.new_context(
-                    user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+                    user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                "Chrome/124.0.0.0 Safari/537.36"),
                     locale="en-US",
                     timezone_id="America/Chicago",
                     viewport={"width": 1440, "height": 2600},
@@ -410,65 +334,39 @@ def scrape_latest_cards(max_retries=2):
                 page.goto(PICK3_URL, wait_until="domcontentloaded", timeout=70000)
                 accept_cookies_if_present(page)
 
-                # Nudge content to render
+                # light nudge
                 try:
-                    page.wait_for_selector("text=Fireball", timeout=30000)
-                except Exception:
-                    pass
-                try:
-                    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    page.wait_for_timeout(1000)
-                    page.evaluate("window.scrollTo(0, 0)")
+                    page.wait_for_selector("text=Pick 3", timeout=15000)
                 except Exception:
                     pass
 
-                # Prefer scoping to Pick 3 section
-                pick3_section = None
-                for sel in ["section:has-text('Pick 3')", "section:has-text('Pick3')", "main"]:
-                    try:
-                        pick3_section = page.query_selector(sel)
-                        if pick3_section:
-                            break
-                    except Exception:
-                        continue
+                links = collect_draw_links(page)
+                if not links:
+                    print("[links] No draw links found on list page.")
+                    return []
 
-                cards = []
-                if pick3_section:
-                    for sel in CARD_SELECTOR_CANDIDATES:
-                        els = pick3_section.query_selector_all(sel)
-                        if els:
-                            cards = els
-                            print(f"[scrape] Using selector in Pick3 scope: {sel} -> {len(cards)}")
-                            break
-                if not cards:
-                    for sel in CARD_SELECTOR_CANDIDATES:
-                        els = page.query_selector_all(sel)
-                        if els:
-                            cards = els
-                            print(f"[scrape] Using global selector: {sel} -> {len(cards)}")
-                            break
-
-                if not cards:
-                    debug_dump(page, "cards-empty")
-                    raise RuntimeError("No result cards found even after multiple selectors.")
-
+                print(f"[links] Visiting {min(8,len(links))} detail pages…")
                 items = []
-                for i, c in enumerate(cards[:20], 1):
-                    it = parse_card(c)
-                    if not it:
-                        try:
-                            snippet = (c.inner_html() or "")[:240].replace("\n", " ")
-                            print(f"[scrape] Card#{i} parse failed. Snippet: {snippet}")
-                        except Exception:
-                            print(f"[scrape] Card#{i} parse failed. (no snippet)")
-                    else:
-                        items.append(it)
-                        print(f"[scrape] Parsed#{i}: {it}")
+                for i, href in enumerate(links[:8], 1):
+                    try:
+                        page.goto(href, wait_until="domcontentloaded", timeout=70000)
+                        accept_cookies_if_present(page)
+                        # small wait for content bits
+                        try: page.wait_for_selector("text=Fireball", timeout=5000)
+                        except Exception: pass
+                        it = parse_detail_page(page)
+                        if it:
+                            items.append(it)
+                            print(f"[detail] Parsed {i}: {it}")
+                        else:
+                            print(f"[detail] Could not parse page {i}: {href}")
+                    except Exception as e:
+                        print(f"[detail] Error on {href}: {e}")
 
                 browser.close()
 
                 if not items:
-                    raise RuntimeError("Parsed zero usable rows (after fallback parsing).")
+                    raise RuntimeError("Parsed zero usable rows from detail pages.")
 
                 return items
 
@@ -493,26 +391,22 @@ def main():
         print("No items parsed; nothing to upsert.")
         return
 
-    # Strict cleaning path: needs date_str + draw label
+    # STRICT path — all fields present
     cleaned = []
     for it in items:
         ds = (it.get("date_str") or "").strip()
         draw = (it.get("draw") or "").strip().title()
         n1, n2, n3 = it.get("num1"), it.get("num2"), it.get("num3")
         fb = (it.get("fireball") or "").strip()
-        if not ds:
-            continue
-        if draw not in {"Midday", "Evening"}:
-            continue
-        if not (isinstance(n1, int) and isinstance(n2, int) and isinstance(n3, int)):
-            continue
-        if not (fb.isdigit() and len(fb) == 1):
-            continue
+        if not ds: continue
+        if draw not in {"Midday","Evening"}: continue
+        if not (isinstance(n1,int) and isinstance(n2,int) and isinstance(n3,int)): continue
+        if not (fb.isdigit() and len(fb) == 1): continue
         cleaned.append(it)
 
     print(f"[filter] Kept {len(cleaned)} rows after completeness checks.")
 
-    # If strict path produced nothing, try assumption fallback
+    # If nothing strict, try assumption fallback (1 missing slot only)
     if not cleaned:
         print("[assume] Trying assumption-based assignment…")
         assumed = assign_by_assumption(items, ws)
@@ -522,7 +416,7 @@ def main():
             print("[assume] No unambiguous slot to assign — aborting safely.")
             return
 
-    # Only keep today/yesterday (allow up to 2 days) per Chicago time
+    # Keep only (Chicago) today/yesterday (allow 2 days just in case)
     today = chicago_today()
     keep = []
     for it in cleaned:
@@ -533,7 +427,7 @@ def main():
             continue
         delta = (today - d).days
         print(f"[filter] Row {it['draw']} {it['date_str']} → {d} (delta={delta})")
-        if delta in (0, 1, 2):  # up to 2 days just in case of late posting
+        if delta in (0,1,2):
             keep.append(it)
 
     print(f"[filter] Rows kept for upsert: {len(keep)}")
