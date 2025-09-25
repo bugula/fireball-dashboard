@@ -315,52 +315,37 @@ def parse_card(card):
 
 
 def scrape_latest_cards(max_retries=2):
-    """
-    Returns a list of items like:
-    [{"date_str": "...", "draw": "Midday", "num1": 1, "num2": 2, "num3": 3, "fireball": "4"}, ...]
-    Only scrapes the first page (latest results).
-    """
     for attempt in range(1, max_retries + 1):
         try:
             print(f"[scrape] Attempt {attempt}...")
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
                 context = browser.new_context(
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/124.0.0.0 Safari/537.36"
-                    ),
+                    user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
                     locale="en-US",
-                    timezone_id="America/Chicago",   # IL time
-                    viewport={"width": 1280, "height": 2400},
+                    timezone_id="America/Chicago",
+                    viewport={"width": 1440, "height": 2600},
                 )
 
-                # Block heavy 3rd-party noise
-                context.route("**/*", lambda route: (
-                    route.abort()
-                    if any(x in route.request.url.lower() for x in [
-                        "doubleclick","googletagmanager","gtm.js","analytics",
-                        "hotjar","facebook","adservice",
-                        ".mp4",".webm",".gif",".svg",".ttf",".woff",".woff2"
-                    ])
-                    else route.continue_()
-                ))
-
                 page = context.new_page()
-                page.set_default_timeout(60000)
-                page.goto(PICK3_URL, wait_until="domcontentloaded", timeout=60000)
+                page.set_default_timeout(70000)
+                page.goto(PICK3_URL, wait_until="domcontentloaded", timeout=70000)
                 accept_cookies_if_present(page)
 
-                # Nudge lazy content to render
+                # Nudge content to render
+                try:
+                    page.wait_for_selector("text=Fireball", timeout=30000)
+                except Exception:
+                    pass
                 try:
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    page.wait_for_timeout(750)
+                    page.wait_for_timeout(1000)
                     page.evaluate("window.scrollTo(0, 0)")
                 except Exception:
                     pass
 
-                # Prefer scoping to a Pick 3 section if present
+                # Prefer scoping to Pick 3 section
                 pick3_section = None
                 for sel in ["section:has-text('Pick 3')", "section:has-text('Pick3')", "main"]:
                     try:
@@ -370,55 +355,46 @@ def scrape_latest_cards(max_retries=2):
                     except Exception:
                         continue
 
-                used_selector = None
+                cards = []
                 if pick3_section:
-                    # Try to find result cards inside the Pick 3 area first
                     for sel in CARD_SELECTOR_CANDIDATES:
                         els = pick3_section.query_selector_all(sel)
                         if els:
                             cards = els
-                            used_selector = f"[Pick3 scope] {sel}"
+                            print(f"[scrape] Using selector in Pick3 scope: {sel} -> {len(cards)}")
                             break
-                    # If that failed, fall back to global wait/scan
-                    if not used_selector:
-                        used_selector = wait_for_results(page, timeout=60000)
-                        cards = page.query_selector_all(used_selector)
-                else:
-                    used_selector = wait_for_results(page, timeout=60000)
-                    cards = page.query_selector_all(used_selector)
-
-                print(f"[scrape] Using selector: {used_selector}")
-                print(f"[scrape] Found {len(cards)} potential cards")
+                if not cards:
+                    for sel in CARD_SELECTOR_CANDIDATES:
+                        els = page.query_selector_all(sel)
+                        if els:
+                            cards = els
+                            print(f"[scrape] Using global selector: {sel} -> {len(cards)}")
+                            break
 
                 if not cards:
                     debug_dump(page, "cards-empty")
-                    raise RuntimeError("No result cards found even after wait + fallbacks.")
+                    raise RuntimeError("No result cards found even after multiple selectors.")
 
-                items = [parse_card(c) for c in cards]
-
-                # Log raw parsed for visibility
-                for i, it in enumerate(items[:10], 1):
-                    print(f"[scrape] Raw#{i}: {it}")
-
-                # Keep rows that have all critical pieces
-                filtered = [
-                    it for it in items
-                    if it.get("date_str")
-                    and it.get("draw") in ("Midday", "Evening")
-                    and isinstance(it.get("num1"), int)
-                    and isinstance(it.get("num2"), int)
-                    and isinstance(it.get("num3"), int)
-                    and str(it.get("fireball", "")).isdigit()
-                ]
-                print(f"[scrape] Usable rows after validation: {len(filtered)}")
+                items = []
+                for i, c in enumerate(cards[:20], 1):
+                    it = parse_card(c)
+                    # For debugging: short HTML sample
+                    if not it:
+                        try:
+                            snippet = (c.inner_html() or "")[:240].replace("\n", " ")
+                            print(f"[scrape] Card#{i} parse failed. Snippet: {snippet}")
+                        except Exception:
+                            print(f"[scrape] Card#{i} parse failed. (no snippet)")
+                    else:
+                        items.append(it)
+                        print(f"[scrape] Parsed#{i}: {it}")
 
                 browser.close()
 
-                if not filtered:
-                    debug_dump(page, "parsed-empty")
-                    raise RuntimeError("Parsed zero usable rows; HTML dumped for inspection.")
+                if not items:
+                    raise RuntimeError("Parsed zero usable rows (after fallback parsing).")
 
-                return filtered
+                return items
 
         except Exception as e:
             print(f"[scrape] Attempt {attempt} FAILED: {e}")
