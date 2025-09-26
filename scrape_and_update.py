@@ -8,8 +8,9 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 
-
-# DEBUG
+# =========================
+# Debug artifacts (unchanged)
+# =========================
 import json as _json
 from pathlib import Path
 
@@ -38,15 +39,12 @@ def save_screenshot(page, name: str):
     except Exception as e:
         print(f"[artifact] screenshot failed: {e}")
 
-#END DEBUG
-
-# ---------------------------------------------------------------------
+# =========================
 # Config
-# ---------------------------------------------------------------------
+# =========================
 BASE_URL   = "https://www.illinoislottery.com"
 PICK3_URL  = f"{BASE_URL}/dbg/results/pick3"
 
-# List page → draw links
 CARD_SELECTOR_CANDIDATES = [
     "a.dbg-results__result",
     "li[data-result] a[href*='/dbg/results/pick3/draw/']",
@@ -54,7 +52,6 @@ CARD_SELECTOR_CANDIDATES = [
     "a[href*='/dbg/results/pick3/draw/']",
 ]
 
-# Detail page selectors (we pair these with regex fallbacks)
 DETAIL_DATE_SEL   = [
     "[data-testid='draw-date']",
     ".dbg-draw-header__date",
@@ -80,16 +77,9 @@ DETAIL_FIREBALL_SEL = [
     "*:has-text('Fireball')"
 ]
 
-# Original long-month regex (kept for legacy fallback)
-MONTHS = r"(January|February|March|April|May|June|July|August|September|October|November|December)"
+# Date helpers
+MONTHS = r"(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)"
 DATE_RE = re.compile(rf"{MONTHS}\s+\d{{1,2}},\s+\d{{4}}", re.I)
-
-# NEW: flexible month (short or long), optional weekday, tolerates newlines
-MONTH_ANY = r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
-DATE_FLEX_RE = re.compile(
-    rf"(?:\b(?:Mon|Tue|Tues|Wed|Thu|Thur|Thurs|Fri|Sat|Sun)day,\s*)?{MONTH_ANY}\s+\d{{1,2}},\s+\d{{4}}",
-    re.I | re.S
-)
 
 CT = pytz.timezone("America/Chicago")
 def chicago_now():
@@ -97,13 +87,12 @@ def chicago_now():
 def chicago_today():
     return chicago_now().date()
 
-# ---------------------------------------------------------------------
+# =========================
 # Google Sheets
-# ---------------------------------------------------------------------
+# =========================
 def get_gspread_client():
     creds_json = os.environ.get("GCP_SERVICE_ACCOUNT")
     if not creds_json:
-        # optional base64 fallback if you set GCP_SERVICE_ACCOUNT_B64
         b64 = os.environ.get("GCP_SERVICE_ACCOUNT_B64")
         if b64:
             import base64
@@ -118,7 +107,6 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 def open_sheets(gc):
-    # If you have a SHEET ID, prefer that; otherwise open by title.
     sheet_id = os.environ.get("FIREBALL_DATA_SHEET_ID", "").strip()
     if sheet_id:
         ss = gc.open_by_key(sheet_id)
@@ -128,38 +116,39 @@ def open_sheets(gc):
     print(f"[sheets] Opened spreadsheet: {ss.title} (sheet1: {ws.title})")
     return ws
 
-# ---------------------------------------------------------------------
+# =========================
 # Helpers
-# ---------------------------------------------------------------------
+# =========================
 def normalize_draw_type(s: str) -> str:
     s = (s or "").strip().lower()
     if "mid" in s: return "Midday"
     if "eve" in s: return "Evening"
     return s.title() if s else ""
 
-# OLD strict parser (kept, but we’ll use the flexible one below)
-def to_date(datestr: str):
-    return datetime.strptime(datestr, "%B %d, %Y").date()
-
-# NEW: normalize a noisy date string into "Mon DD, YYYY" (short or long month)
-def normalize_date_text(s: str) -> str:
-    if not s:
-        return ""
-    s = s.replace("\xa0", " ")
-    m = DATE_FLEX_RE.search(s)
+def _parse_date_str(raw: str):
+    """
+    Accept inputs like:
+      'Thursday,\nSep 25, 2025\nevening'
+      'Sep 25, 2025'
+      'September 25, 2025'
+    Return a date() or raise.
+    """
+    if not raw:
+        raise ValueError("empty date_str")
+    s = " ".join(raw.split())  # collapse newlines/spaces
+    # strip weekday and trailing words like 'evening/midday'
+    # find the 'Mon DD, YYYY' or 'Month DD, YYYY' core
+    m = DATE_RE.search(s)
     if not m:
-        return ""
-    cleaned = re.sub(r"\s+", " ", m.group(0)).strip()
-    return cleaned
-
-# NEW: parse either "%B %d, %Y" or "%b %d, %Y", fallback to pandas
-def parse_date_flex(datestr: str):
-    for fmt in ("%B %d, %Y", "%b %d, %Y"):
+        raise ValueError(f"no month-date-year found in: {s!r}")
+    core = m.group(0)  # e.g. 'Sep 25, 2025' or 'September 25, 2025'
+    # Try several formats
+    for fmt in ("%b %d, %Y", "%B %d, %Y"):
         try:
-            return datetime.strptime(datestr, fmt).date()
+            return datetime.strptime(core, fmt).date()
         except Exception:
             pass
-    return pd.to_datetime(datestr, errors="raise").date()
+    raise ValueError(f"unparsed date core: {core!r}")
 
 def already_in_sheet(ws, row):
     df = pd.DataFrame(ws.get_all_records())
@@ -179,9 +168,9 @@ def upsert_latest(ws, items):
     appended = 0
     for it in items:
         try:
-            d = parse_date_flex(normalize_date_text(it["date_str"]))  # <-- FLEX PARSE
-        except Exception:
-            print(f"[upsert] Bad date: {it.get('date_str')}, skipping")
+            d = _parse_date_str(it["date_str"])
+        except Exception as e:
+            print(f"[upsert] Bad date: {it.get('date_str')} ({e}), skipping")
             continue
         row_obj = {
             "date": d,
@@ -213,7 +202,7 @@ def expected_missing_slots(ws):
     df = pd.DataFrame(ws.get_all_records())
     today = chicago_today()
     if df.empty:
-        return [(today, "Midday")]  # bootstrap
+        return [(today, "Midday")]
     df.columns = df.columns.str.strip().str.lower()
     if not {"date","draw"}.issubset(df.columns):
         return [(today, "Midday")]
@@ -235,7 +224,6 @@ def expected_missing_slots(ws):
     if have_mid_today and not have_eve_today:
         missing.append((today, "Evening"))
 
-    # de-dup, keep order
     seen, dedup = set(), []
     for m in missing:
         if m not in seen:
@@ -254,14 +242,14 @@ def assign_by_assumption(scraped_items, ws):
         return []
     target_date, target_draw = missing[0]
     it = usable[0].copy()
-    it["date_str"] = it.get("date_str") or target_date.strftime("%B %d, %Y")
+    it["date_str"] = it.get("date_str") or target_date.strftime("%b %d, %Y")
     it["draw"]     = it.get("draw")     or target_draw
     print(f"[assume] Assigned scraped row to {(target_date, target_draw)}")
     return [it]
 
-# ---------------------------------------------------------------------
+# =========================
 # Playwright scraping
-# ---------------------------------------------------------------------
+# =========================
 def safe_text(el):
     if not el: return ""
     try:
@@ -276,12 +264,11 @@ def safe_text(el):
         return ""
 
 def collect_draw_links(page):
-    """Return absolute hrefs for recent Pick 3 draws on the LIST page."""
     for sel in CARD_SELECTOR_CANDIDATES:
         links = page.query_selector_all(sel)
         if links:
             hrefs = []
-            for a in links[:12]:  # first 12 rows is plenty
+            for a in links[:12]:
                 try:
                     href = a.get_attribute("href") or ""
                     if "/dbg/results/pick3/draw/" in href:
@@ -293,26 +280,63 @@ def collect_draw_links(page):
                 return hrefs
     return []
 
+def _extract_numbers_from_accessibility(html: str, text: str):
+    """
+    Prefer accessibility strings like:
+      'Winning number 1 is 7'
+      'Winning number 2 is 5'
+      'Winning number 3 is 8'
+    Returns list[str] of length 3 or [].
+    """
+    blob = (html or "") + "\n" + (text or "")
+    # Normalize spacing
+    blob = " ".join(blob.split())
+    p = re.compile(r"Winning\s+number\s*1\s*is\s*(\d).*?Winning\s+number\s*2\s*is\s*(\d).*?Winning\s+number\s*3\s*is\s*(\d)", re.I)
+    m = p.search(blob)
+    if m:
+        return [m.group(1), m.group(2), m.group(3)]
+    # Alternative phrasing: 'Winning number one is 7' is rare, but keep numeric only.
+    return []
+
+def _extract_numbers_fallback(html: str, text: str):
+    """
+    Tight fallback: look for 'Winning Numbers:' followed by three single digits with small separators.
+    """
+    blob = (html or "") + "\n" + (text or "")
+    blob = " ".join(blob.split())
+    m = re.search(r"Winning\s*Numbers?.*?(\d)[^\d]{0,3}(\d)[^\d]{0,3}(\d)", blob, re.I)
+    if m:
+        return [m.group(1), m.group(2), m.group(3)]
+    # As a last resort: any three single digits close together (but we’ll sanity-check later)
+    m2 = re.search(r"(\d)[^\d]{0,2}(\d)[^\d]{0,2}(\d)", blob)
+    if m2:
+        return [m2.group(1), m2.group(2), m2.group(3)]
+    return []
+
+def _extract_fireball(html: str, text: str):
+    blob = (html or "") + "\n" + (text or "")
+    blob = " ".join(blob.split())
+    m = re.search(r"Fireball[:\s\-]*\s*(\d)", blob, re.I)
+    return m.group(1) if m else ""
+
 def parse_detail_page(page):
-    """Parse a detail page into a dict or None."""
-    # robust text blobs for fallbacks
+    # robust blobs
     try:
         body_text = page.locator("body").inner_text(timeout=0)
     except Exception:
         body_text = ""
     html = page.content()
 
-    # Date (normalize to a clean "Mon DD, YYYY")
+    # Date
     date_text = ""
     for sel in DETAIL_DATE_SEL:
         date_text = safe_text(page.query_selector(sel))
         if date_text:
             break
-    if date_text:
-        date_text = normalize_date_text(date_text)
     if not date_text:
-        # fallbacks via whole page
-        date_text = normalize_date_text(body_text) or normalize_date_text(html)
+        mdate = DATE_RE.search(html) or DATE_RE.search(body_text)
+        if mdate:
+            date_text = mdate.group(0)
 
     # Draw type
     draw_text = ""
@@ -329,23 +353,24 @@ def parse_detail_page(page):
         elif re.search(r"\beve(ning)?\b", html, re.I) or re.search(r"\beve(ning)?\b", body_text, re.I):
             draw_text = "Evening"
 
-    # Pick 3 digits
-    nums = []
-    for sel in DETAIL_P3_SEL:
-        block = safe_text(page.query_selector(sel))
-        if block:
-            nums.extend([c for c in block if c.isdigit()])
-    if len(nums) < 3:
-        m = re.search(r"Winning\s*Numbers?.*?(\d)[^\d]{0,3}(\d)[^\d]{0,3}(\d)", html, re.I | re.S)
-        if not m:
-            m = re.search(r"Winning\s*Numbers?.*?(\d)[^\d]{0,3}(\d)[^\d]{0,3}(\d)", body_text, re.I | re.S)
-        if m:
-            nums = [m.group(1), m.group(2), m.group(3)]
-    if len(nums) < 3 and body_text:
-        m = re.search(r"(\d)[^\d]{0,3}(\d)[^\d]{0,3}(\d)", body_text)
-        if m:
-            nums = [m.group(1), m.group(2), m.group(3)]
-    nums = nums[:3]
+    # Numbers – STRONG path first: accessibility text
+    nums = _extract_numbers_from_accessibility(html, body_text)
+
+    # If that yielded nothing, try targeted number containers (but DO NOT pad)
+    if not nums:
+        blocks = []
+        for sel in DETAIL_P3_SEL:
+            b = safe_text(page.query_selector(sel))
+            if b:
+                blocks.append(b)
+        joined = " ".join(blocks)
+        cand = re.findall(r"\b(\d)\b", joined)
+        if len(cand) >= 3:
+            nums = cand[:3]
+
+    # If still nothing, use tight fallback
+    if not nums:
+        nums = _extract_numbers_fallback(html, body_text)
 
     # Fireball
     fb = ""
@@ -357,26 +382,31 @@ def parse_detail_page(page):
                 fb = fb_digits[0]
                 break
     if not fb:
-        mfb = re.search(r"Fireball[:\s\-]*\s*(\d)", html, re.I) or re.search(r"Fireball[:\s\-]*\s*(\d)", body_text, re.I)
-        if mfb:
-            fb = mfb.group(1)
+        fb = _extract_fireball(html, body_text)
 
-    if date_text and draw_text in ("Midday","Evening") and len(nums) == 3 and fb.isdigit():
-        return {
-            "date_str": date_text,
-            "draw": draw_text,
-            "num1": int(nums[0]),
-            "num2": int(nums[1]),
-            "num3": int(nums[2]),
-            "fireball": fb,
-        }
-    return None
+    # Guard against classic placeholder "1 2 3" – re-try only with accessibility pattern
+    if nums == ["1","2","3"]:
+        print("[parse] WARNING: got 1,2,3 — rechecking with accessibility-only path.")
+        nums2 = _extract_numbers_from_accessibility(html, body_text)
+        if nums2 and nums2 != ["1","2","3"]:
+            nums = nums2
+
+    if not (date_text and draw_text in ("Midday","Evening") and len(nums) == 3 and fb.isdigit()):
+        print(f"[parse] Incomplete parse -> date={date_text!r}, draw={draw_text!r}, nums={nums}, fb={fb!r}")
+        return None
+
+    out = {
+        "date_str": date_text,
+        "draw": draw_text,
+        "num1": int(nums[0]),
+        "num2": int(nums[1]),
+        "num3": int(nums[2]),
+        "fireball": fb,
+    }
+    print(f"[parse] OK -> {out}")
+    return out
 
 def scrape_latest_cards(max_retries=2):
-    """
-    1) Open list page, collect draw links.
-    2) Visit top N detail pages and parse.
-    """
     for attempt in range(1, max_retries + 1):
         try:
             print(f"[scrape] Attempt {attempt}…")
@@ -395,14 +425,13 @@ def scrape_latest_cards(max_retries=2):
                 page.set_default_timeout(70000)
                 page.goto(PICK3_URL, wait_until="domcontentloaded", timeout=70000)
 
-                # dump the list page for inspection
+                # dump list page
                 try:
                     save_text("list.html", page.content())
                     save_screenshot(page, "list.png")
                 except Exception:
                     pass
 
-                # Light nudge
                 try: page.wait_for_selector("text=Pick 3", timeout=15000)
                 except Exception: pass
 
@@ -418,14 +447,12 @@ def scrape_latest_cards(max_retries=2):
                         page.goto(href, wait_until="domcontentloaded", timeout=70000)
                         try: page.wait_for_selector("text=Fireball", timeout=5000)
                         except Exception: pass
-                        # dump every detail page (helpful for one or two runs)
                         save_text(f"detail_{i}.html", page.content())
                         save_screenshot(page, f"detail_{i}.png")
 
                         it = parse_detail_page(page)
                         if it:
                             items.append(it)
-                            print(f"[detail] Parsed {i}: {it}")
                         else:
                             print(f"[detail] Could not parse page {i}: {href}")
 
@@ -447,21 +474,19 @@ def scrape_latest_cards(max_retries=2):
             time.sleep(2)
     return []
 
-# ---------------------------------------------------------------------
+# =========================
 # Main
-# ---------------------------------------------------------------------
+# =========================
 def main():
     gc = get_gspread_client()
     ws = open_sheets(gc)
 
     items = scrape_latest_cards()
 
-    # --- SCRAPE-ONLY DEBUG MODE ---
+    # DEBUG mode: skip writing
     if os.getenv("DEBUG_SCRAPE_ONLY", "0") == "1":
         print(f"[debug] DEBUG_SCRAPE_ONLY=1 -> not writing to Sheets.")
         print(f"[debug] items scraped: {len(items)}")
-        for idx, it in enumerate(items[:5], 1):
-            print(f"[debug] item#{idx}: {it}")
         save_json("items_raw.json", items)
         return
 
@@ -469,7 +494,7 @@ def main():
         print("No items parsed; nothing to upsert.")
         return
 
-    # STRICT path — all fields present
+    # Strict filter (all fields present)
     cleaned = []
     for it in items:
         ds = (it.get("date_str") or "").strip()
@@ -484,7 +509,6 @@ def main():
 
     print(f"[filter] Kept {len(cleaned)} rows after completeness checks.")
 
-    # If nothing strict, try assumption fallback (1 missing slot only)
     if not cleaned:
         print("[assume] Trying assumption-based assignment…")
         assumed = assign_by_assumption(items, ws)
@@ -494,20 +518,18 @@ def main():
             print("[assume] No unambiguous slot to assign — aborting safely.")
             return
 
-    # Keep only (Chicago) today/yesterday (allow 2 days as buffer)
+    # Keep only recent (today/yesterday, allow 2 days buffer)
     today = chicago_today()
     keep = []
     for it in cleaned:
         try:
-            d = parse_date_flex(normalize_date_text(it["date_str"]))  # <-- FLEX PARSE HERE
-        except Exception:
-            print(f"[filter] Could not parse date_str: {it.get('date_str')}")
+            d = _parse_date_str(it["date_str"])
+        except Exception as e:
+            print(f"[filter] Could not parse date_str: {it.get('date_str')} ({e})")
             continue
         delta = (today - d).days
         print(f"[filter] Row {it['draw']} {it['date_str']} → {d} (delta={delta})")
         if delta in (0,1,2):
-            # normalize stored date_str for consistency
-            it["date_str"] = d.strftime("%b %d, %Y")
             keep.append(it)
 
     print(f"[filter] Rows kept for upsert: {len(keep)}")
