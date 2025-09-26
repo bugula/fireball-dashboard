@@ -80,8 +80,16 @@ DETAIL_FIREBALL_SEL = [
     "*:has-text('Fireball')"
 ]
 
+# Original long-month regex (kept for legacy fallback)
 MONTHS = r"(January|February|March|April|May|June|July|August|September|October|November|December)"
 DATE_RE = re.compile(rf"{MONTHS}\s+\d{{1,2}},\s+\d{{4}}", re.I)
+
+# NEW: flexible month (short or long), optional weekday, tolerates newlines
+MONTH_ANY = r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+DATE_FLEX_RE = re.compile(
+    rf"(?:\b(?:Mon|Tue|Tues|Wed|Thu|Thur|Thurs|Fri|Sat|Sun)day,\s*)?{MONTH_ANY}\s+\d{{1,2}},\s+\d{{4}}",
+    re.I | re.S
+)
 
 CT = pytz.timezone("America/Chicago")
 def chicago_now():
@@ -129,8 +137,29 @@ def normalize_draw_type(s: str) -> str:
     if "eve" in s: return "Evening"
     return s.title() if s else ""
 
+# OLD strict parser (kept, but we’ll use the flexible one below)
 def to_date(datestr: str):
     return datetime.strptime(datestr, "%B %d, %Y").date()
+
+# NEW: normalize a noisy date string into "Mon DD, YYYY" (short or long month)
+def normalize_date_text(s: str) -> str:
+    if not s:
+        return ""
+    s = s.replace("\xa0", " ")
+    m = DATE_FLEX_RE.search(s)
+    if not m:
+        return ""
+    cleaned = re.sub(r"\s+", " ", m.group(0)).strip()
+    return cleaned
+
+# NEW: parse either "%B %d, %Y" or "%b %d, %Y", fallback to pandas
+def parse_date_flex(datestr: str):
+    for fmt in ("%B %d, %Y", "%b %d, %Y"):
+        try:
+            return datetime.strptime(datestr, fmt).date()
+        except Exception:
+            pass
+    return pd.to_datetime(datestr, errors="raise").date()
 
 def already_in_sheet(ws, row):
     df = pd.DataFrame(ws.get_all_records())
@@ -150,7 +179,7 @@ def upsert_latest(ws, items):
     appended = 0
     for it in items:
         try:
-            d = to_date(it["date_str"])
+            d = parse_date_flex(normalize_date_text(it["date_str"]))  # <-- FLEX PARSE
         except Exception:
             print(f"[upsert] Bad date: {it.get('date_str')}, skipping")
             continue
@@ -163,7 +192,6 @@ def upsert_latest(ws, items):
             "fireball": it["fireball"],
         }
         if not already_in_sheet(ws, row_obj):
-            # Log exactly what we’re about to write
             print(f"[append] WILL APPEND -> {row_obj['date']} {row_obj['draw']} "
                   f"{row_obj['num1']}{row_obj['num2']}{row_obj['num3']} + FB {row_obj['fireball']}")
             ws.append_row([
@@ -219,7 +247,6 @@ def assign_by_assumption(scraped_items, ws):
     for it in scraped_items:
         n1, n2, n3 = it.get("num1"), it.get("num2"), it.get("num3")
         fb = str(it.get("fireball","")).strip()
-        # allow missing date/draw here; just check digits
         if isinstance(n1,int) and isinstance(n2,int) and isinstance(n3,int) and fb.isdigit():
             usable.append(it)
     missing = expected_missing_slots(ws)
@@ -275,16 +302,17 @@ def parse_detail_page(page):
         body_text = ""
     html = page.content()
 
-    # Date
+    # Date (normalize to a clean "Mon DD, YYYY")
     date_text = ""
     for sel in DETAIL_DATE_SEL:
         date_text = safe_text(page.query_selector(sel))
         if date_text:
             break
+    if date_text:
+        date_text = normalize_date_text(date_text)
     if not date_text:
-        mdate = DATE_RE.search(html) or DATE_RE.search(body_text)
-        if mdate:
-            date_text = mdate.group(0)
+        # fallbacks via whole page
+        date_text = normalize_date_text(body_text) or normalize_date_text(html)
 
     # Draw type
     draw_text = ""
@@ -367,14 +395,12 @@ def scrape_latest_cards(max_retries=2):
                 page.set_default_timeout(70000)
                 page.goto(PICK3_URL, wait_until="domcontentloaded", timeout=70000)
 
-                # NEW
                 # dump the list page for inspection
                 try:
                     save_text("list.html", page.content())
                     save_screenshot(page, "list.png")
                 except Exception:
                     pass
-                #END NEW
 
                 # Light nudge
                 try: page.wait_for_selector("text=Pick 3", timeout=15000)
@@ -434,10 +460,8 @@ def main():
     if os.getenv("DEBUG_SCRAPE_ONLY", "0") == "1":
         print(f"[debug] DEBUG_SCRAPE_ONLY=1 -> not writing to Sheets.")
         print(f"[debug] items scraped: {len(items)}")
-        # show first few in logs
         for idx, it in enumerate(items[:5], 1):
             print(f"[debug] item#{idx}: {it}")
-        # also persist to artifacts
         save_json("items_raw.json", items)
         return
 
@@ -445,15 +469,12 @@ def main():
         print("No items parsed; nothing to upsert.")
         return
 
-
     # STRICT path — all fields present
     cleaned = []
     for it in items:
         ds = (it.get("date_str") or "").strip()
         draw = (it.get("draw") or "").strip().title()
-        n1, n2, n3 = it.get("num1"), it.get("num3"), it.get("num3")
-        # fix typo: read again properly
-        n1 = it.get("num1"); n2 = it.get("num2"); n3 = it.get("num3")
+        n1, n2, n3 = it.get("num1"), it.get("num2"), it.get("num3")
         fb = (it.get("fireball") or "").strip()
         if not ds: continue
         if draw not in {"Midday","Evening"}: continue
@@ -478,13 +499,15 @@ def main():
     keep = []
     for it in cleaned:
         try:
-            d = to_date(it["date_str"])
+            d = parse_date_flex(normalize_date_text(it["date_str"]))  # <-- FLEX PARSE HERE
         except Exception:
             print(f"[filter] Could not parse date_str: {it.get('date_str')}")
             continue
         delta = (today - d).days
         print(f"[filter] Row {it['draw']} {it['date_str']} → {d} (delta={delta})")
         if delta in (0,1,2):
+            # normalize stored date_str for consistency
+            it["date_str"] = d.strftime("%b %d, %Y")
             keep.append(it)
 
     print(f"[filter] Rows kept for upsert: {len(keep)}")
