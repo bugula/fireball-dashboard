@@ -129,6 +129,66 @@ def upsert_latest(ws, items):
     print(f"[upsert] Total appended: {appended}")
     return appended
 
+# ---------- NEW: last-seen helpers to keep only strictly-new rows ----------
+def draw_rank(draw):
+    return {"Midday": 0, "Evening": 1}.get(str(draw).strip().title(), -1)
+
+def get_last_seen(ws):
+    """
+    Return (last_date, last_draw) based on the sheet:
+    - last_date is the max date present
+    - last_draw is the latest within that date (Evening > Midday)
+    """
+    df = pd.DataFrame(ws.get_all_records())
+    if df.empty:
+        return (None, None)
+    df.columns = df.columns.str.strip().str.lower()
+    if not {"date","draw"}.issubset(df.columns):
+        return (None, None)
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    df["draw"] = df["draw"].astype(str).str.strip().str.title()
+    df = df.dropna(subset=["date"])
+    if df.empty:
+        return (None, None)
+    last_date = df["date"].max()
+    same_day = df[df["date"] == last_date].copy()
+    if same_day.empty:
+        return (last_date, None)
+    same_day["rank"] = same_day["draw"].map(draw_rank)
+    same_day = same_day.sort_values("rank")  # Midday(0) then Evening(1)
+    last_draw = same_day.iloc[-1]["draw"]    # take the highest rank
+    return (last_date, last_draw)
+
+def filter_newer_than_sheet(items, ws):
+    """
+    Keep only items strictly newer than the sheet's last (date, draw).
+    Ordering: date asc, within date Midday(0) < Evening(1).
+    """
+    last_date, last_draw = get_last_seen(ws)
+    print(f"[last_seen] Sheet last_date={last_date}, last_draw={last_draw}")
+
+    if last_date is None:
+        print("[newer] Sheet empty; keeping all items.")
+        return items
+
+    out = []
+    last_rank = draw_rank(last_draw)
+    for it in items:
+        try:
+            d = to_date(it["date_str"])
+        except Exception:
+            print(f"[newer] Bad date_str in item: {it}")
+            continue
+        r = draw_rank(it.get("draw"))
+        if d > last_date:
+            out.append(it)
+        elif d == last_date and r > last_rank:
+            out.append(it)
+        else:
+            print(f"[newer] Skipping not-new: {it.get('draw')} {it.get('date_str')}")
+    print(f"[newer] Candidates after last_seen filter: {len(out)}")
+    return out
+
 # ---------- Assumption fallback (1 missing slot) ----------
 def expected_missing_slots(ws):
     df = pd.DataFrame(ws.get_all_records())
@@ -156,7 +216,6 @@ def expected_missing_slots(ws):
     if have_mid_today and not have_eve_today:
         missing.append((today, "Evening"))
 
-    # de-dup, keep order
     seen, dedup = set(), []
     for m in missing:
         if m not in seen:
@@ -168,7 +227,6 @@ def assign_by_assumption(scraped_items, ws):
     for it in scraped_items:
         n1, n2, n3 = it.get("num1"), it.get("num2"), it.get("num3")
         fb = str(it.get("fireball","")).strip()
-        # allow missing date/draw here; just check digits
         if isinstance(n1,int) and isinstance(n2,int) and isinstance(n3,int) and fb.isdigit():
             usable.append(it)
     missing = expected_missing_slots(ws)
@@ -241,20 +299,9 @@ def parse_detail_page(page):
     Parse from a DRAW DETAIL page.
     Returns dict or None.
     """
-    def safe_text(el):
-        if not el: return ""
-        try:
-            t = el.inner_text().strip()
-            if t: return t
-        except Exception:
-            pass
-        try:
-            t = el.text_content().strip()
-            return t or ""
-        except Exception:
-            return ""
+    def _s(el):
+        return safe_text(el)
 
-    # Grab stable representations of the page for regex fallbacks
     try:
         body_text = page.locator("body").inner_text(timeout=0)
     except Exception:
@@ -264,7 +311,7 @@ def parse_detail_page(page):
     # --- Date ---
     date_text = ""
     for sel in DETAIL_DATE_SEL:
-        date_text = safe_text(page.query_selector(sel))
+        date_text = _s(page.query_selector(sel))
         if date_text:
             break
     if not date_text:
@@ -275,7 +322,7 @@ def parse_detail_page(page):
     # --- Draw type ---
     draw_text = ""
     for sel in DETAIL_DRAW_SEL:
-        t = safe_text(page.query_selector(sel))
+        t = _s(page.query_selector(sel))
         if t:
             draw_text = normalize_draw_type(t)
             if draw_text in ("Midday", "Evening"):
@@ -288,21 +335,16 @@ def parse_detail_page(page):
 
     # --- Pick 3 digits ---
     nums = []
-    # Try obvious number containers first
     for sel in DETAIL_P3_SEL:
-        block = safe_text(page.query_selector(sel))
+        block = _s(page.query_selector(sel))
         if block:
             nums.extend([c for c in block if c.isdigit()])
-    # Try ARIA/alt in the whole HTML
     if len(nums) < 3:
-        # Examples that often appear in markup / accessibility:
-        # "Winning Numbers: 1 2 3", aria-label="Winning number 1 is 5", etc.
         m = re.search(r"Winning\s*Numbers?.*?(\d)[^\d]{0,3}(\d)[^\d]{0,3}(\d)", html, re.I | re.S)
         if not m:
             m = re.search(r"Winning\s*Numbers?.*?(\d)[^\d]{0,3}(\d)[^\d]{0,3}(\d)", body_text, re.I | re.S)
         if m:
             nums = [m.group(1), m.group(2), m.group(3)]
-    # Last-ditch: any three single digits near each other in visible text
     if len(nums) < 3 and body_text:
         m = re.search(r"(\d)[^\d]{0,3}(\d)[^\d]{0,3}(\d)", body_text)
         if m:
@@ -312,7 +354,7 @@ def parse_detail_page(page):
     # --- Fireball ---
     fb = ""
     for sel in DETAIL_FIREBALL_SEL:
-        block = safe_text(page.query_selector(sel))
+        block = _s(page.query_selector(sel))
         if block:
             fb_digits = re.findall(r"\d", block)
             if fb_digits:
@@ -377,7 +419,6 @@ def scrape_latest_cards(max_retries=2):
                     try:
                         page.goto(href, wait_until="domcontentloaded", timeout=70000)
                         accept_cookies_if_present(page)
-                        # small wait for content bits
                         try: page.wait_for_selector("text=Fireball", timeout=5000)
                         except Exception: pass
                         it = parse_detail_page(page)
@@ -409,15 +450,20 @@ def scrape_latest_cards(max_retries=2):
 # Main
 # ---------------------------------------------------------------------
 def main():
+    # 1) Sheets
     gc = get_gspread_client()
     ws = open_sheets(gc)
 
+    # 2) Scrape
     items = scrape_latest_cards()
     if not items:
         print("No items parsed; nothing to upsert.")
         return
+    print(f"[main] Parsed {len(items)} items:")
+    for it in items:
+        print("       ", it)
 
-    # STRICT path — all fields present
+    # 3) STRICT completeness check
     cleaned = []
     for it in items:
         ds = (it.get("date_str") or "").strip()
@@ -429,38 +475,26 @@ def main():
         if not (isinstance(n1,int) and isinstance(n2,int) and isinstance(n3,int)): continue
         if not (fb.isdigit() and len(fb) == 1): continue
         cleaned.append(it)
-
     print(f"[filter] Kept {len(cleaned)} rows after completeness checks.")
 
-    # If nothing strict, try assumption fallback (1 missing slot only)
+    # 4) If nothing strict, try assumption fallback (only when unambiguous)
     if not cleaned:
         print("[assume] Trying assumption-based assignment…")
         assumed = assign_by_assumption(items, ws)
         if assumed:
             cleaned = assumed
+            print(f"[assume] Using assumed row: {assumed[0]}")
         else:
             print("[assume] No unambiguous slot to assign — aborting safely.")
             return
 
-    # Keep only (Chicago) today/yesterday (allow 2 days just in case)
-    today = chicago_today()
-    keep = []
-    for it in cleaned:
-        try:
-            d = to_date(it["date_str"])
-        except Exception:
-            print(f"[filter] Could not parse date_str: {it.get('date_str')}")
-            continue
-        delta = (today - d).days
-        print(f"[filter] Row {it['draw']} {it['date_str']} → {d} (delta={delta})")
-        if delta in (0,1,2):
-            keep.append(it)
-
-    print(f"[filter] Rows kept for upsert: {len(keep)}")
+    # 5) Keep only rows strictly newer than what’s already in the sheet
+    keep = filter_newer_than_sheet(cleaned, ws)
     if not keep:
-        print("Parsed items didn’t match today/yesterday; nothing to upsert.")
+        print("[main] Nothing newer than sheet; no append.")
         return
 
+    # 6) Append (upsert re-checks duplicates just in case)
     appended = upsert_latest(ws, keep)
     print(f"[main] Done. Appended rows: {appended}")
 
