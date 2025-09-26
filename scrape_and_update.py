@@ -3,7 +3,7 @@ import os, json, re, time, traceback
 from datetime import datetime, time as dtime
 import pytz
 
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+from playwright.sync_api import sync_playwright
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
@@ -14,7 +14,7 @@ import pandas as pd
 BASE_URL   = "https://www.illinoislottery.com"
 PICK3_URL  = f"{BASE_URL}/dbg/results/pick3"
 
-# Broad selector candidates (site markup can change)
+# List page → draw links
 CARD_SELECTOR_CANDIDATES = [
     "a.dbg-results__result",
     "li[data-result] a[href*='/dbg/results/pick3/draw/']",
@@ -22,7 +22,7 @@ CARD_SELECTOR_CANDIDATES = [
     "a[href*='/dbg/results/pick3/draw/']",
 ]
 
-# On the DETAIL page we try these:
+# Detail page selectors (we pair these with regex fallbacks)
 DETAIL_DATE_SEL   = [
     "[data-testid='draw-date']",
     ".dbg-draw-header__date",
@@ -48,39 +48,6 @@ DETAIL_FIREBALL_SEL = [
     "*:has-text('Fireball')"
 ]
 
-# ---------------------------------------------------------------------
-# Google Sheets auth
-# ---------------------------------------------------------------------
-def get_gspread_client():
-    creds_json = os.environ.get("GCP_SERVICE_ACCOUNT")
-    if not creds_json:
-        raise RuntimeError("Missing GCP_SERVICE_ACCOUNT secret.")
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(creds_json), scope)
-    return gspread.authorize(creds)
-
-def open_sheets(gc):
-    sheet_id = os.environ.get("FIREBALL_DATA_SHEET_ID")
-    if not sheet_id:
-        raise RuntimeError("Missing FIREBALL_DATA_SHEET_ID secret.")
-    try:
-        ss = gc.open_by_key(sheet_id)
-    except gspread.SpreadsheetNotFound:
-        raise RuntimeError(
-            "Spreadsheet not found. Make sure the GitHub Action's service account "
-            "email has at least Editor access to this spreadsheet."
-        )
-    ws = ss.sheet1
-    print(f"[sheets] Opened spreadsheet: {ss.title} (sheet1 title: {ws.title})")
-    return ws
-
-
-# ---------------------------------------------------------------------
-# Helpers: parsing & dates
-# ---------------------------------------------------------------------
 MONTHS = r"(January|February|March|April|May|June|July|August|September|October|November|December)"
 DATE_RE = re.compile(rf"{MONTHS}\s+\d{{1,2}},\s+\d{{4}}", re.I)
 
@@ -90,6 +57,40 @@ def chicago_now():
 def chicago_today():
     return chicago_now().date()
 
+# ---------------------------------------------------------------------
+# Google Sheets
+# ---------------------------------------------------------------------
+def get_gspread_client():
+    creds_json = os.environ.get("GCP_SERVICE_ACCOUNT")
+    if not creds_json:
+        # optional base64 fallback if you set GCP_SERVICE_ACCOUNT_B64
+        b64 = os.environ.get("GCP_SERVICE_ACCOUNT_B64")
+        if b64:
+            import base64
+            creds_json = base64.b64decode(b64).decode("utf-8")
+    if not creds_json:
+        raise RuntimeError("Missing GCP_SERVICE_ACCOUNT (or GCP_SERVICE_ACCOUNT_B64) secret.")
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(creds_json), scope)
+    return gspread.authorize(creds)
+
+def open_sheets(gc):
+    # If you have a SHEET ID, prefer that; otherwise open by title.
+    sheet_id = os.environ.get("FIREBALL_DATA_SHEET_ID", "").strip()
+    if sheet_id:
+        ss = gc.open_by_key(sheet_id)
+    else:
+        ss = gc.open("fireball_data")
+    ws = ss.sheet1
+    print(f"[sheets] Opened spreadsheet: {ss.title} (sheet1: {ws.title})")
+    return ws
+
+# ---------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------
 def normalize_draw_type(s: str) -> str:
     s = (s or "").strip().lower()
     if "mid" in s: return "Midday"
@@ -108,7 +109,10 @@ def already_in_sheet(ws, row):
         return False
     df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
     df["draw"] = df["draw"].astype(str).str.strip().str.title()
-    return ((df["date"] == row["date"]) & (df["draw"] == row["draw"])).any()
+    exists = ((df["date"] == row["date"]) & (df["draw"] == row["draw"])).any()
+    if exists:
+        print(f"[dup] Row already present: {row['date']} {row['draw']}")
+    return exists
 
 def upsert_latest(ws, items):
     appended = 0
@@ -127,6 +131,9 @@ def upsert_latest(ws, items):
             "fireball": it["fireball"],
         }
         if not already_in_sheet(ws, row_obj):
+            # Log exactly what we’re about to write
+            print(f"[append] WILL APPEND -> {row_obj['date']} {row_obj['draw']} "
+                  f"{row_obj['num1']}{row_obj['num2']}{row_obj['num3']} + FB {row_obj['fireball']}")
             ws.append_row([
                 str(row_obj["date"]),
                 row_obj["draw"],
@@ -136,73 +143,12 @@ def upsert_latest(ws, items):
                 row_obj["fireball"],
             ])
             appended += 1
-            print(f"[upsert] Appended: {row_obj['date']} {row_obj['draw']} {row_obj['num1']}{row_obj['num2']}{row_obj['num3']} + FB {row_obj['fireball']}")
         else:
-            print(f"[upsert] Exists already: {row_obj['date']} {row_obj['draw']} — skipped")
+            print(f"[append] Skipped (exists) -> {row_obj['date']} {row_obj['draw']}")
     print(f"[upsert] Total appended: {appended}")
     return appended
 
-# ---------- NEW: last-seen helpers to keep only strictly-new rows ----------
-def draw_rank(draw):
-    return {"Midday": 0, "Evening": 1}.get(str(draw).strip().title(), -1)
-
-def get_last_seen(ws):
-    """
-    Return (last_date, last_draw) based on the sheet:
-    - last_date is the max date present
-    - last_draw is the latest within that date (Evening > Midday)
-    """
-    df = pd.DataFrame(ws.get_all_records())
-    if df.empty:
-        return (None, None)
-    df.columns = df.columns.str.strip().str.lower()
-    if not {"date","draw"}.issubset(df.columns):
-        return (None, None)
-    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
-    df["draw"] = df["draw"].astype(str).str.strip().str.title()
-    df = df.dropna(subset=["date"])
-    if df.empty:
-        return (None, None)
-    last_date = df["date"].max()
-    same_day = df[df["date"] == last_date].copy()
-    if same_day.empty:
-        return (last_date, None)
-    same_day["rank"] = same_day["draw"].map(draw_rank)
-    same_day = same_day.sort_values("rank")  # Midday(0) then Evening(1)
-    last_draw = same_day.iloc[-1]["draw"]    # take the highest rank
-    return (last_date, last_draw)
-
-def filter_newer_than_sheet(items, ws):
-    """
-    Keep only items strictly newer than the sheet's last (date, draw).
-    Ordering: date asc, within date Midday(0) < Evening(1).
-    """
-    last_date, last_draw = get_last_seen(ws)
-    print(f"[last_seen] Sheet last_date={last_date}, last_draw={last_draw}")
-
-    if last_date is None:
-        print("[newer] Sheet empty; keeping all items.")
-        return items
-
-    out = []
-    last_rank = draw_rank(last_draw)
-    for it in items:
-        try:
-            d = to_date(it["date_str"])
-        except Exception:
-            print(f"[newer] Bad date_str in item: {it}")
-            continue
-        r = draw_rank(it.get("draw"))
-        if d > last_date:
-            out.append(it)
-        elif d == last_date and r > last_rank:
-            out.append(it)
-        else:
-            print(f"[newer] Skipping not-new: {it.get('draw')} {it.get('date_str')}")
-    print(f"[newer] Candidates after last_seen filter: {len(out)}")
-    return out
-
-# ---------- Assumption fallback (1 missing slot) ----------
+# ---------- Assumption fallback (only if exactly one slot is missing) ----------
 def expected_missing_slots(ws):
     df = pd.DataFrame(ws.get_all_records())
     today = chicago_today()
@@ -229,6 +175,7 @@ def expected_missing_slots(ws):
     if have_mid_today and not have_eve_today:
         missing.append((today, "Evening"))
 
+    # de-dup, keep order
     seen, dedup = set(), []
     for m in missing:
         if m not in seen:
@@ -240,6 +187,7 @@ def assign_by_assumption(scraped_items, ws):
     for it in scraped_items:
         n1, n2, n3 = it.get("num1"), it.get("num2"), it.get("num3")
         fb = str(it.get("fireball","")).strip()
+        # allow missing date/draw here; just check digits
         if isinstance(n1,int) and isinstance(n2,int) and isinstance(n3,int) and fb.isdigit():
             usable.append(it)
     missing = expected_missing_slots(ws)
@@ -253,7 +201,7 @@ def assign_by_assumption(scraped_items, ws):
     return [it]
 
 # ---------------------------------------------------------------------
-# Playwright scraping helpers
+# Playwright scraping
 # ---------------------------------------------------------------------
 def safe_text(el):
     if not el: return ""
@@ -268,24 +216,6 @@ def safe_text(el):
     except Exception:
         return ""
 
-def accept_cookies_if_present(page):
-    for sel in [
-        "#onetrust-accept-btn-handler",
-        "button:has-text('Accept')",
-        "button:has-text('I Accept')",
-        "button:has-text('Agree')",
-        "button[aria-label*='accept' i]",
-        "button:has-text('Got it')",
-    ]:
-        try:
-            btn = page.query_selector(sel)
-            if btn:
-                btn.click()
-                page.wait_for_timeout(300)
-                return
-        except Exception:
-            pass
-
 def collect_draw_links(page):
     """Return absolute hrefs for recent Pick 3 draws on the LIST page."""
     for sel in CARD_SELECTOR_CANDIDATES:
@@ -296,10 +226,7 @@ def collect_draw_links(page):
                 try:
                     href = a.get_attribute("href") or ""
                     if "/dbg/results/pick3/draw/" in href:
-                        if href.startswith("http"):
-                            hrefs.append(href)
-                        else:
-                            hrefs.append(BASE_URL + href)
+                        hrefs.append(href if href.startswith("http") else (BASE_URL + href))
                 except Exception:
                     continue
             if hrefs:
@@ -308,23 +235,18 @@ def collect_draw_links(page):
     return []
 
 def parse_detail_page(page):
-    """
-    Parse from a DRAW DETAIL page.
-    Returns dict or None.
-    """
-    def _s(el):
-        return safe_text(el)
-
+    """Parse a detail page into a dict or None."""
+    # robust text blobs for fallbacks
     try:
         body_text = page.locator("body").inner_text(timeout=0)
     except Exception:
         body_text = ""
     html = page.content()
 
-    # --- Date ---
+    # Date
     date_text = ""
     for sel in DETAIL_DATE_SEL:
-        date_text = _s(page.query_selector(sel))
+        date_text = safe_text(page.query_selector(sel))
         if date_text:
             break
     if not date_text:
@@ -332,13 +254,14 @@ def parse_detail_page(page):
         if mdate:
             date_text = mdate.group(0)
 
-    # --- Draw type ---
+    # Draw type
     draw_text = ""
     for sel in DETAIL_DRAW_SEL:
-        t = _s(page.query_selector(sel))
+        t = safe_text(page.query_selector(sel))
         if t:
-            draw_text = normalize_draw_type(t)
-            if draw_text in ("Midday", "Evening"):
+            t = normalize_draw_type(t)
+            if t in ("Midday","Evening"):
+                draw_text = t
                 break
     if not draw_text:
         if re.search(r"\bmid(day)?\b", html, re.I) or re.search(r"\bmid(day)?\b", body_text, re.I):
@@ -346,10 +269,10 @@ def parse_detail_page(page):
         elif re.search(r"\beve(ning)?\b", html, re.I) or re.search(r"\beve(ning)?\b", body_text, re.I):
             draw_text = "Evening"
 
-    # --- Pick 3 digits ---
+    # Pick 3 digits
     nums = []
     for sel in DETAIL_P3_SEL:
-        block = _s(page.query_selector(sel))
+        block = safe_text(page.query_selector(sel))
         if block:
             nums.extend([c for c in block if c.isdigit()])
     if len(nums) < 3:
@@ -364,10 +287,10 @@ def parse_detail_page(page):
             nums = [m.group(1), m.group(2), m.group(3)]
     nums = nums[:3]
 
-    # --- Fireball ---
+    # Fireball
     fb = ""
     for sel in DETAIL_FIREBALL_SEL:
-        block = _s(page.query_selector(sel))
+        block = safe_text(page.query_selector(sel))
         if block:
             fb_digits = re.findall(r"\d", block)
             if fb_digits:
@@ -378,7 +301,7 @@ def parse_detail_page(page):
         if mfb:
             fb = mfb.group(1)
 
-    if date_text and draw_text in ("Midday", "Evening") and len(nums) == 3 and fb.isdigit():
+    if date_text and draw_text in ("Midday","Evening") and len(nums) == 3 and fb.isdigit():
         return {
             "date_str": date_text,
             "draw": draw_text,
@@ -389,12 +312,10 @@ def parse_detail_page(page):
         }
     return None
 
-
 def scrape_latest_cards(max_retries=2):
     """
-    Strategy:
-    1) Open list page, collect the draw links.
-    2) Visit top N detail pages and parse text (date/draw/numbers/fireball).
+    1) Open list page, collect draw links.
+    2) Visit top N detail pages and parse.
     """
     for attempt in range(1, max_retries + 1):
         try:
@@ -413,17 +334,14 @@ def scrape_latest_cards(max_retries=2):
                 page = context.new_page()
                 page.set_default_timeout(70000)
                 page.goto(PICK3_URL, wait_until="domcontentloaded", timeout=70000)
-                accept_cookies_if_present(page)
 
-                # light nudge
-                try:
-                    page.wait_for_selector("text=Pick 3", timeout=15000)
-                except Exception:
-                    pass
+                # Light nudge
+                try: page.wait_for_selector("text=Pick 3", timeout=15000)
+                except Exception: pass
 
                 links = collect_draw_links(page)
                 if not links:
-                    print("[links] No draw links found on list page.")
+                    print("[links] No draw links found.")
                     return []
 
                 print(f"[links] Visiting {min(8,len(links))} detail pages…")
@@ -431,7 +349,6 @@ def scrape_latest_cards(max_retries=2):
                 for i, href in enumerate(links[:8], 1):
                     try:
                         page.goto(href, wait_until="domcontentloaded", timeout=70000)
-                        accept_cookies_if_present(page)
                         try: page.wait_for_selector("text=Fireball", timeout=5000)
                         except Exception: pass
                         it = parse_detail_page(page)
@@ -456,70 +373,73 @@ def scrape_latest_cards(max_retries=2):
             if attempt == max_retries:
                 raise
             time.sleep(2)
-
     return []
 
 # ---------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------
 def main():
-    # 1) Sheets
     gc = get_gspread_client()
     ws = open_sheets(gc)
 
-    # --- TEMP healthcheck write (remove after verifying) ---
-    try:
-        ts = chicago_now().strftime("%Y-%m-%d %H:%M:%S %Z")
-        ws.update("H1", f"GitHub Action connected @ {ts}")
-        print("[healthcheck] Wrote connection stamp to H1.")
-    except Exception as e:
-        print("[healthcheck] Failed to write to sheet:", e)
-        raise
-    # --- end TEMP ---
-    
-    # 2) Scrape
     items = scrape_latest_cards()
     if not items:
         print("No items parsed; nothing to upsert.")
         return
-    print(f"[main] Parsed {len(items)} items:")
-    for it in items:
-        print("       ", it)
 
-    # 3) STRICT completeness check
+    # STRICT path — all fields present
     cleaned = []
     for it in items:
         ds = (it.get("date_str") or "").strip()
         draw = (it.get("draw") or "").strip().title()
-        n1, n2, n3 = it.get("num1"), it.get("num2"), it.get("num3")
+        n1, n2, n3 = it.get("num1"), it.get("num3"), it.get("num3")
+        # fix typo: read again properly
+        n1 = it.get("num1"); n2 = it.get("num2"); n3 = it.get("num3")
         fb = (it.get("fireball") or "").strip()
         if not ds: continue
         if draw not in {"Midday","Evening"}: continue
         if not (isinstance(n1,int) and isinstance(n2,int) and isinstance(n3,int)): continue
         if not (fb.isdigit() and len(fb) == 1): continue
         cleaned.append(it)
+
     print(f"[filter] Kept {len(cleaned)} rows after completeness checks.")
 
-    # 4) If nothing strict, try assumption fallback (only when unambiguous)
+    # If nothing strict, try assumption fallback (1 missing slot only)
     if not cleaned:
         print("[assume] Trying assumption-based assignment…")
         assumed = assign_by_assumption(items, ws)
         if assumed:
             cleaned = assumed
-            print(f"[assume] Using assumed row: {assumed[0]}")
         else:
             print("[assume] No unambiguous slot to assign — aborting safely.")
             return
 
-    # 5) Keep only rows strictly newer than what’s already in the sheet
-    keep = filter_newer_than_sheet(cleaned, ws)
+    # Keep only (Chicago) today/yesterday (allow 2 days as buffer)
+    today = chicago_today()
+    keep = []
+    for it in cleaned:
+        try:
+            d = to_date(it["date_str"])
+        except Exception:
+            print(f"[filter] Could not parse date_str: {it.get('date_str')}")
+            continue
+        delta = (today - d).days
+        print(f"[filter] Row {it['draw']} {it['date_str']} → {d} (delta={delta})")
+        if delta in (0,1,2):
+            keep.append(it)
+
+    print(f"[filter] Rows kept for upsert: {len(keep)}")
     if not keep:
-        print("[main] Nothing newer than sheet; no append.")
+        print("Parsed items didn’t match today/yesterday; nothing to upsert.")
         return
 
-    # 6) Append (upsert re-checks duplicates just in case)
     appended = upsert_latest(ws, keep)
-    print(f"[main] Done. Appended rows: {appended}")
+    if appended == 0:
+        print("[result] 0 rows appended. Likely they already existed, or the service account lacks write access.")
+        print("         If your Streamlit app writes fine but this doesn’t, SHARE the sheet with the "
+              "service account’s client_email from the Action’s JSON.")
+    else:
+        print(f"[result] Appended {appended} new row(s).")
 
 if __name__ == "__main__":
     main()
