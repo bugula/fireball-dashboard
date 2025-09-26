@@ -367,6 +367,15 @@ def scrape_latest_cards(max_retries=2):
                 page.set_default_timeout(70000)
                 page.goto(PICK3_URL, wait_until="domcontentloaded", timeout=70000)
 
+                # NEW
+                # dump the list page for inspection
+                try:
+                    save_text("list.html", page.content())
+                    save_screenshot(page, "list.png")
+                except Exception:
+                    pass
+                #END NEW
+
                 # Light nudge
                 try: page.wait_for_selector("text=Pick 3", timeout=15000)
                 except Exception: pass
@@ -383,12 +392,17 @@ def scrape_latest_cards(max_retries=2):
                         page.goto(href, wait_until="domcontentloaded", timeout=70000)
                         try: page.wait_for_selector("text=Fireball", timeout=5000)
                         except Exception: pass
+                        # dump every detail page (helpful for one or two runs)
+                        save_text(f"detail_{i}.html", page.content())
+                        save_screenshot(page, f"detail_{i}.png")
+
                         it = parse_detail_page(page)
                         if it:
                             items.append(it)
                             print(f"[detail] Parsed {i}: {it}")
                         else:
                             print(f"[detail] Could not parse page {i}: {href}")
+
                     except Exception as e:
                         print(f"[detail] Error on {href}: {e}")
 
@@ -415,9 +429,22 @@ def main():
     ws = open_sheets(gc)
 
     items = scrape_latest_cards()
+
+    # --- SCRAPE-ONLY DEBUG MODE ---
+    if os.getenv("DEBUG_SCRAPE_ONLY", "0") == "1":
+        print(f"[debug] DEBUG_SCRAPE_ONLY=1 -> not writing to Sheets.")
+        print(f"[debug] items scraped: {len(items)}")
+        # show first few in logs
+        for idx, it in enumerate(items[:5], 1):
+            print(f"[debug] item#{idx}: {it}")
+        # also persist to artifacts
+        save_json("items_raw.json", items)
+        return
+
     if not items:
         print("No items parsed; nothing to upsert.")
         return
+
 
     # STRICT path — all fields present
     cleaned = []
