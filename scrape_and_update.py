@@ -8,6 +8,38 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 
+
+# DEBUG
+import json as _json
+from pathlib import Path
+
+ART_DIR = Path("artifacts")
+def _ensure_art_dir():
+    ART_DIR.mkdir(parents=True, exist_ok=True)
+
+def save_text(name: str, text: str):
+    _ensure_art_dir()
+    p = ART_DIR / name
+    p.write_text(text or "", encoding="utf-8")
+    print(f"[artifact] wrote {p}")
+
+def save_json(name: str, obj):
+    _ensure_art_dir()
+    p = ART_DIR / name
+    p.write_text(_json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"[artifact] wrote {p}")
+
+def save_screenshot(page, name: str):
+    try:
+        _ensure_art_dir()
+        p = ART_DIR / name
+        page.screenshot(path=str(p), full_page=True)
+        print(f"[artifact] wrote {p}")
+    except Exception as e:
+        print(f"[artifact] screenshot failed: {e}")
+
+#END DEBUG
+
 # ---------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------
