@@ -241,49 +241,75 @@ def parse_detail_page(page):
     Parse from a DRAW DETAIL page.
     Returns dict or None.
     """
-    # Date
+    def safe_text(el):
+        if not el: return ""
+        try:
+            t = el.inner_text().strip()
+            if t: return t
+        except Exception:
+            pass
+        try:
+            t = el.text_content().strip()
+            return t or ""
+        except Exception:
+            return ""
+
+    # Grab stable representations of the page for regex fallbacks
+    try:
+        body_text = page.locator("body").inner_text(timeout=0)
+    except Exception:
+        body_text = ""
+    html = page.content()
+
+    # --- Date ---
     date_text = ""
     for sel in DETAIL_DATE_SEL:
         date_text = safe_text(page.query_selector(sel))
         if date_text:
             break
     if not date_text:
-        mdate = DATE_RE.search(page.content())
-        if mdate: date_text = mdate.group(0)
+        mdate = DATE_RE.search(html) or DATE_RE.search(body_text)
+        if mdate:
+            date_text = mdate.group(0)
 
-    # Draw type
+    # --- Draw type ---
     draw_text = ""
     for sel in DETAIL_DRAW_SEL:
         t = safe_text(page.query_selector(sel))
         if t:
             draw_text = normalize_draw_type(t)
-            if draw_text in ("Midday","Evening"):
+            if draw_text in ("Midday", "Evening"):
                 break
     if not draw_text:
-        full = page.content()
-        if re.search(r"\bmid(day)?\b", full, re.I): draw_text = "Midday"
-        elif re.search(r"\beve(ning)?\b", full, re.I): draw_text = "Evening"
+        if re.search(r"\bmid(day)?\b", html, re.I) or re.search(r"\bmid(day)?\b", body_text, re.I):
+            draw_text = "Midday"
+        elif re.search(r"\beve(ning)?\b", html, re.I) or re.search(r"\beve(ning)?\b", body_text, re.I):
+            draw_text = "Evening"
 
-    # Numbers: try to pull exactly 3 digits (many pages render as text somewhere)
+    # --- Pick 3 digits ---
     nums = []
+    # Try obvious number containers first
     for sel in DETAIL_P3_SEL:
         block = safe_text(page.query_selector(sel))
         if block:
             nums.extend([c for c in block if c.isdigit()])
+    # Try ARIA/alt in the whole HTML
     if len(nums) < 3:
-        # ARIA/alt strings
-        html = page.content()
-        m = re.search(r"Winning(?:\s+)?Numbers?:?\s*([0-9][^\d]+[0-9][^\d]+[0-9])", html, re.I)
+        # Examples that often appear in markup / accessibility:
+        # "Winning Numbers: 1 2 3", aria-label="Winning number 1 is 5", etc.
+        m = re.search(r"Winning\s*Numbers?.*?(\d)[^\d]{0,3}(\d)[^\d]{0,3}(\d)", html, re.I | re.S)
+        if not m:
+            m = re.search(r"Winning\s*Numbers?.*?(\d)[^\d]{0,3}(\d)[^\d]{0,3}(\d)", body_text, re.I | re.S)
         if m:
-            nums = re.findall(r"\d", m.group(1))
-    if len(nums) < 3:
-        # final fallback: scan all text for three digits near each other
-        m = re.search(r"(\d)[^\d]{0,3}(\d)[^\d]{0,3}(\d)", page.inner_text())
+            nums = [m.group(1), m.group(2), m.group(3)]
+    # Last-ditch: any three single digits near each other in visible text
+    if len(nums) < 3 and body_text:
+        m = re.search(r"(\d)[^\d]{0,3}(\d)[^\d]{0,3}(\d)", body_text)
         if m:
             nums = [m.group(1), m.group(2), m.group(3)]
     nums = nums[:3]
 
-    # Fireball
+    # --- Fireball ---
     fb = ""
     for sel in DETAIL_FIREBALL_SEL:
         block = safe_text(page.query_selector(sel))
@@ -293,12 +319,11 @@ def parse_detail_page(page):
                 fb = fb_digits[0]
                 break
     if not fb:
-        html = page.content()
-        mfb = re.search(r"Fireball[:\s\-]*\s*(\d)", html, re.I)
+        mfb = re.search(r"Fireball[:\s\-]*\s*(\d)", html, re.I) or re.search(r"Fireball[:\s\-]*\s*(\d)", body_text, re.I)
         if mfb:
             fb = mfb.group(1)
 
-    if date_text and draw_text in ("Midday","Evening") and len(nums) == 3 and fb.isdigit():
+    if date_text and draw_text in ("Midday", "Evening") and len(nums) == 3 and fb.isdigit():
         return {
             "date_str": date_text,
             "draw": draw_text,
@@ -308,6 +333,7 @@ def parse_detail_page(page):
             "fireball": fb,
         }
     return None
+
 
 def scrape_latest_cards(max_retries=2):
     """
