@@ -63,7 +63,20 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 def open_sheets(gc):
-    return gc.open("fireball_data").sheet1
+    sheet_id = os.environ.get("FIREBALL_DATA_SHEET_ID")
+    if not sheet_id:
+        raise RuntimeError("Missing FIREBALL_DATA_SHEET_ID secret.")
+    try:
+        ss = gc.open_by_key(sheet_id)
+    except gspread.SpreadsheetNotFound:
+        raise RuntimeError(
+            "Spreadsheet not found. Make sure the GitHub Action's service account "
+            "email has at least Editor access to this spreadsheet."
+        )
+    ws = ss.sheet1
+    print(f"[sheets] Opened spreadsheet: {ss.title} (sheet1 title: {ws.title})")
+    return ws
+
 
 # ---------------------------------------------------------------------
 # Helpers: parsing & dates
@@ -454,6 +467,16 @@ def main():
     gc = get_gspread_client()
     ws = open_sheets(gc)
 
+    # --- TEMP healthcheck write (remove after verifying) ---
+    try:
+        ts = chicago_now().strftime("%Y-%m-%d %H:%M:%S %Z")
+        ws.update("H1", f"GitHub Action connected @ {ts}")
+        print("[healthcheck] Wrote connection stamp to H1.")
+    except Exception as e:
+        print("[healthcheck] Failed to write to sheet:", e)
+        raise
+    # --- end TEMP ---
+    
     # 2) Scrape
     items = scrape_latest_cards()
     if not items:
