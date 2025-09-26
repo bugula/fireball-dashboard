@@ -9,7 +9,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 
 # =========================
-# Debug artifacts (unchanged)
+# Debug artifacts
 # =========================
 import json as _json
 from pathlib import Path
@@ -45,6 +45,7 @@ def save_screenshot(page, name: str):
 BASE_URL   = "https://www.illinoislottery.com"
 PICK3_URL  = f"{BASE_URL}/dbg/results/pick3"
 
+# List page → draw links
 CARD_SELECTOR_CANDIDATES = [
     "a.dbg-results__result",
     "li[data-result] a[href*='/dbg/results/pick3/draw/']",
@@ -52,6 +53,7 @@ CARD_SELECTOR_CANDIDATES = [
     "a[href*='/dbg/results/pick3/draw/']",
 ]
 
+# Detail page selectors
 DETAIL_DATE_SEL   = [
     "[data-testid='draw-date']",
     ".dbg-draw-header__date",
@@ -65,12 +67,26 @@ DETAIL_DRAW_SEL   = [
     "*:text('Midday')",
     "*:text('Evening')",
 ]
-DETAIL_P3_SEL     = [
+
+# Container(s) that actually hold the 3 winning digits
+WINNUMS_CONTAINER_SEL = [
+    "[data-testid='winning-numbers']",
+    ".dbg-winning-numbers",
+    ".winning-numbers",
+    "section:has-text('Winning Numbers')",
+    "div:has-text('Winning Numbers')",
+]
+
+# Inside the container, places to look for digits
+WINNUMS_DIGIT_SEL = [
+    "[aria-label*='Winning number' i]",
+    "[alt]",
     "[data-testid='result-number']",
     ".dbg-winning-number",
     ".winning-number",
-    ".dbg-winning-numbers, .winning-numbers"
+    "span, div, li, img",
 ]
+
 DETAIL_FIREBALL_SEL = [
     "[data-testid='fireball']",
     ".dbg-fireball, .fireball",
@@ -136,13 +152,10 @@ def _parse_date_str(raw: str):
     if not raw:
         raise ValueError("empty date_str")
     s = " ".join(raw.split())  # collapse newlines/spaces
-    # strip weekday and trailing words like 'evening/midday'
-    # find the 'Mon DD, YYYY' or 'Month DD, YYYY' core
     m = DATE_RE.search(s)
     if not m:
         raise ValueError(f"no month-date-year found in: {s!r}")
-    core = m.group(0)  # e.g. 'Sep 25, 2025' or 'September 25, 2025'
-    # Try several formats
+    core = m.group(0)  # 'Sep 25, 2025' or 'September 25, 2025'
     for fmt in ("%b %d, %Y", "%B %d, %Y"):
         try:
             return datetime.strptime(core, fmt).date()
@@ -280,53 +293,61 @@ def collect_draw_links(page):
                 return hrefs
     return []
 
-def _extract_numbers_from_accessibility(html: str, text: str):
-    """
-    Prefer accessibility strings like:
-      'Winning number 1 is 7'
-      'Winning number 2 is 5'
-      'Winning number 3 is 8'
-    Returns list[str] of length 3 or [].
-    """
-    blob = (html or "") + "\n" + (text or "")
-    # Normalize spacing
-    blob = " ".join(blob.split())
-    p = re.compile(r"Winning\s+number\s*1\s*is\s*(\d).*?Winning\s+number\s*2\s*is\s*(\d).*?Winning\s+number\s*3\s*is\s*(\d)", re.I)
-    m = p.search(blob)
+def _numbers_from_container(container):
+    """Extract 3 digits strictly from the winning-numbers container."""
+    if not container:
+        return []
+    # 1) Accessibility first: 'Winning number N is X'
+    blob = " ".join((container.inner_text() or "").split())
+    m = re.search(r"Winning\s+number\s*1\s*is\s*(\d).*?Winning\s+number\s*2\s*is\s*(\d).*?Winning\s+number\s*3\s*is\s*(\d)", blob, re.I)
     if m:
         return [m.group(1), m.group(2), m.group(3)]
-    # Alternative phrasing: 'Winning number one is 7' is rare, but keep numeric only.
-    return []
 
-def _extract_numbers_fallback(html: str, text: str):
-    """
-    Tight fallback: look for 'Winning Numbers:' followed by three single digits with small separators.
-    """
-    blob = (html or "") + "\n" + (text or "")
-    blob = " ".join(blob.split())
-    m = re.search(r"Winning\s*Numbers?.*?(\d)[^\d]{0,3}(\d)[^\d]{0,3}(\d)", blob, re.I)
-    if m:
-        return [m.group(1), m.group(2), m.group(3)]
-    # As a last resort: any three single digits close together (but we’ll sanity-check later)
-    m2 = re.search(r"(\d)[^\d]{0,2}(\d)[^\d]{0,2}(\d)", blob)
+    # 2) Element attributes inside the container
+    digits = []
+    for sel in WINNUMS_DIGIT_SEL:
+        for node in container.query_selector_all(sel):
+            # prefer aria-label / alt
+            txt = (node.get_attribute("aria-label") or
+                   node.get_attribute("alt") or
+                   safe_text(node) or "")
+            m1 = re.search(r"\b(\d)\b", txt)
+            if m1:
+                digits.append(m1.group(1))
+            if len(digits) >= 3:
+                return digits[:3]
+
+    # 3) Tight fallback INSIDE the container only
+    html = container.inner_html() or ""
+    html = " ".join(html.split())
+    m2 = re.search(r"(\d)[^\d]{0,2}(\d)[^\d]{0,2}(\d)", html)
     if m2:
         return [m2.group(1), m2.group(2), m2.group(3)]
+
     return []
 
-def _extract_fireball(html: str, text: str):
-    blob = (html or "") + "\n" + (text or "")
-    blob = " ".join(blob.split())
-    m = re.search(r"Fireball[:\s\-]*\s*(\d)", blob, re.I)
+def _fireball_from_page(page, container=None):
+    """Find Fireball digit, prefer container vicinity first."""
+    # try near-container
+    if container:
+        txt = safe_text(container)
+        m = re.search(r"Fireball[:\s\-]*\s*(\d)", txt, re.I)
+        if m: return m.group(1)
+
+    # fall back to page
+    for sel in DETAIL_FIREBALL_SEL:
+        block = safe_text(page.query_selector(sel))
+        if block:
+            fb_digits = re.findall(r"\d", block)
+            if fb_digits:
+                return fb_digits[0]
+
+    # final regex on whole page
+    body = safe_text(page.locator("body"))
+    m = re.search(r"Fireball[:\s\-]*\s*(\d)", body, re.I)
     return m.group(1) if m else ""
 
 def parse_detail_page(page):
-    # robust blobs
-    try:
-        body_text = page.locator("body").inner_text(timeout=0)
-    except Exception:
-        body_text = ""
-    html = page.content()
-
     # Date
     date_text = ""
     for sel in DETAIL_DATE_SEL:
@@ -334,7 +355,8 @@ def parse_detail_page(page):
         if date_text:
             break
     if not date_text:
-        mdate = DATE_RE.search(html) or DATE_RE.search(body_text)
+        body = safe_text(page.locator("body"))
+        mdate = DATE_RE.search(body)
         if mdate:
             date_text = mdate.group(0)
 
@@ -348,51 +370,37 @@ def parse_detail_page(page):
                 draw_text = t
                 break
     if not draw_text:
-        if re.search(r"\bmid(day)?\b", html, re.I) or re.search(r"\bmid(day)?\b", body_text, re.I):
+        body = safe_text(page.locator("body"))
+        if re.search(r"\bmid(day)?\b", body, re.I):
             draw_text = "Midday"
-        elif re.search(r"\beve(ning)?\b", html, re.I) or re.search(r"\beve(ning)?\b", body_text, re.I):
+        elif re.search(r"\beve(ning)?\b", body, re.I):
             draw_text = "Evening"
 
-    # Numbers – STRONG path first: accessibility text
-    nums = _extract_numbers_from_accessibility(html, body_text)
+    # Winning numbers container (required)
+    container = None
+    for sel in WINNUMS_CONTAINER_SEL:
+        c = page.query_selector(sel)
+        if c:
+            container = c
+            break
+    if not container:
+        print("[parse] No winning-numbers container found; skipping page.")
+        return None
 
-    # If that yielded nothing, try targeted number containers (but DO NOT pad)
-    if not nums:
-        blocks = []
-        for sel in DETAIL_P3_SEL:
-            b = safe_text(page.query_selector(sel))
-            if b:
-                blocks.append(b)
-        joined = " ".join(blocks)
-        cand = re.findall(r"\b(\d)\b", joined)
-        if len(cand) >= 3:
-            nums = cand[:3]
+    nums = _numbers_from_container(container)
 
-    # If still nothing, use tight fallback
-    if not nums:
-        nums = _extract_numbers_fallback(html, body_text)
-
-    # Fireball
-    fb = ""
-    for sel in DETAIL_FIREBALL_SEL:
-        block = safe_text(page.query_selector(sel))
-        if block:
-            fb_digits = re.findall(r"\d", block)
-            if fb_digits:
-                fb = fb_digits[0]
-                break
-    if not fb:
-        fb = _extract_fireball(html, body_text)
-
-    # Guard against classic placeholder "1 2 3" – re-try only with accessibility pattern
+    # Hard guard: never accept 1,2,3 unless they came from explicit accessibility pattern
     if nums == ["1","2","3"]:
-        print("[parse] WARNING: got 1,2,3 — rechecking with accessibility-only path.")
-        nums2 = _extract_numbers_from_accessibility(html, body_text)
-        if nums2 and nums2 != ["1","2","3"]:
-            nums = nums2
+        blob = " ".join((container.inner_text() or "").split())
+        acc = re.search(r"Winning\s+number\s*1\s*is\s*1.*?Winning\s+number\s*2\s*is\s*2.*?Winning\s+number\s*3\s*is\s*3", blob, re.I)
+        if not acc:
+            print("[parse] Rejected 1,2,3 from container (likely placeholder).")
+            return None
+
+    fb = _fireball_from_page(page, container)
 
     if not (date_text and draw_text in ("Midday","Evening") and len(nums) == 3 and fb.isdigit()):
-        print(f"[parse] Incomplete parse -> date={date_text!r}, draw={draw_text!r}, nums={nums}, fb={fb!r}")
+        print(f"[parse] Incomplete -> date={date_text!r}, draw={draw_text!r}, nums={nums}, fb={fb!r}")
         return None
 
     out = {
@@ -425,7 +433,6 @@ def scrape_latest_cards(max_retries=2):
                 page.set_default_timeout(70000)
                 page.goto(PICK3_URL, wait_until="domcontentloaded", timeout=70000)
 
-                # dump list page
                 try:
                     save_text("list.html", page.content())
                     save_screenshot(page, "list.png")
@@ -483,7 +490,6 @@ def main():
 
     items = scrape_latest_cards()
 
-    # DEBUG mode: skip writing
     if os.getenv("DEBUG_SCRAPE_ONLY", "0") == "1":
         print(f"[debug] DEBUG_SCRAPE_ONLY=1 -> not writing to Sheets.")
         print(f"[debug] items scraped: {len(items)}")
@@ -494,7 +500,6 @@ def main():
         print("No items parsed; nothing to upsert.")
         return
 
-    # Strict filter (all fields present)
     cleaned = []
     for it in items:
         ds = (it.get("date_str") or "").strip()
@@ -518,7 +523,6 @@ def main():
             print("[assume] No unambiguous slot to assign — aborting safely.")
             return
 
-    # Keep only recent (today/yesterday, allow 2 days buffer)
     today = chicago_today()
     keep = []
     for it in cleaned:
@@ -540,8 +544,6 @@ def main():
     appended = upsert_latest(ws, keep)
     if appended == 0:
         print("[result] 0 rows appended. Likely they already existed, or the service account lacks write access.")
-        print("         If your Streamlit app writes fine but this doesn’t, SHARE the sheet with the "
-              "service account’s client_email from the Action’s JSON.")
     else:
         print(f"[result] Appended {appended} new row(s).")
 
