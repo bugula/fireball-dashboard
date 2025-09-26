@@ -47,3 +47,19 @@ jobs:
       - name: Run scraper
         run: python scrape_and_update.py
         timeout-minutes: 15
+
+      - name: Run scraper (scrape-only)
+        env:
+          DEBUG_SCRAPE_ONLY: "1"
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          GCP_SERVICE_ACCOUNT_B64: ${{ secrets.GCP_SERVICE_ACCOUNT_B64 }}
+        run: |
+          python scrape_and_update.py
+        timeout-minutes: 10
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrape-debug
+          path: artifacts/**
