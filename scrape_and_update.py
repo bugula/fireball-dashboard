@@ -348,60 +348,107 @@ def _fireball_from_page(page, container=None):
     return m.group(1) if m else ""
 
 def parse_detail_page(page):
-    # Date
+    """Parse a detail page into a dict or None using text windows near headings."""
+    # ---- grab big text blobs once
+    try:
+        body_text = page.locator("body").inner_text(timeout=0)
+    except Exception:
+        body_text = ""
+    html = page.content()
+
+    # ---- date (use your robust helper downstream)
+    # pull a broad date candidate string (we'll parse with _parse_date_str)
     date_text = ""
-    for sel in DETAIL_DATE_SEL:
-        date_text = safe_text(page.query_selector(sel))
-        if date_text:
+    # try common date spots
+    for sel in ["[data-testid='draw-date']", ".dbg-draw-header__date", "time[datetime]", "time"]:
+        t = safe_text(page.query_selector(sel))
+        if t:
+            date_text = t
             break
     if not date_text:
-        body = safe_text(page.locator("body"))
-        mdate = DATE_RE.search(body)
+        mdate = DATE_RE.search(html) or DATE_RE.search(body_text)
         if mdate:
             date_text = mdate.group(0)
+        else:
+            # we will still try to parse later; keep empty if none
+            date_text = ""
 
-    # Draw type
+    # ---- draw type
     draw_text = ""
-    for sel in DETAIL_DRAW_SEL:
+    for sel in ["[data-testid='draw-name']", ".dbg-draw-header__draw"]:
         t = safe_text(page.query_selector(sel))
         if t:
             t = normalize_draw_type(t)
-            if t in ("Midday","Evening"):
+            if t in ("Midday", "Evening"):
                 draw_text = t
                 break
     if not draw_text:
-        body = safe_text(page.locator("body"))
-        if re.search(r"\bmid(day)?\b", body, re.I):
+        bt = body_text.lower()
+        if "midday" in bt:
             draw_text = "Midday"
-        elif re.search(r"\beve(ning)?\b", body, re.I):
+        elif "evening" in bt:
             draw_text = "Evening"
 
-    # Winning numbers container (required)
-    container = None
-    for sel in WINNUMS_CONTAINER_SEL:
-        c = page.query_selector(sel)
-        if c:
-            container = c
-            break
-    if not container:
-        print("[parse] No winning-numbers container found; skipping page.")
+    # ---- narrow to window after "Winning Numbers"
+    bt_compact = " ".join(body_text.split())
+    idx = re.search(r"winning\s+numbers", bt_compact, re.I)
+    window = ""
+    if idx:
+        start = idx.start()
+        window = bt_compact[start:start + 1200]  # small, local window
+    else:
+        # fallback: look for "Winning number 1 is"
+        idx2 = re.search(r"winning\s+number\s*1", bt_compact, re.I)
+        if idx2:
+            start = idx2.start()
+            window = bt_compact[start:start + 1200]
+
+    # ---- extract 3 digits from the window ONLY
+    nums = []
+    if window:
+        # Accessibility style first: "Winning number 1 is X"
+        m = re.search(
+            r"winning\s*number\s*1\s*is\s*(\d).*?winning\s*number\s*2\s*is\s*(\d).*?winning\s*number\s*3\s*is\s*(\d)",
+            window, re.I
+        )
+        if m:
+            nums = [m.group(1), m.group(2), m.group(3)]
+        if len(nums) < 3:
+            # tight 3 single-digits near each other (avoid dates by staying inside window)
+            m2 = re.search(r"(\d)[^\d]{0,2}(\d)[^\d]{0,2}(\d)", window)
+            if m2:
+                nums = [m2.group(1), m2.group(2), m2.group(3)]
+
+    # ---- fireball: small window around the word Fireball
+    fb = ""
+    fb_idx = re.search(r"fireball", bt_compact, re.I)
+    if fb_idx:
+        start = max(0, fb_idx.start() - 60)
+        end   = fb_idx.start() + 120
+        fb_window = bt_compact[start:end]
+        mfb = re.search(r"fireball[:\s\-]*\s*(\d)", fb_window, re.I)
+        if mfb:
+            fb = mfb.group(1)
+    if not fb:
+        # last resort: look for a single digit right after Fireball anywhere
+        mfb2 = re.search(r"fireball[:\s\-]*\s*(\d)", bt_compact, re.I)
+        if mfb2:
+            fb = mfb2.group(1)
+
+    # ---- validate / finalize
+    if not date_text or draw_text not in ("Midday", "Evening") or len(nums) != 3 or not fb.isdigit():
+        print(f"[parse-winwin] Incomplete -> date={date_text!r}, draw={draw_text!r}, nums={nums}, fb={fb!r}")
         return None
 
-    nums = _numbers_from_container(container)
-
-    # Hard guard: never accept 1,2,3 unless they came from explicit accessibility pattern
+    # guard against the infamous 1,2,3 placeholder unless explicitly stated
     if nums == ["1","2","3"]:
-        blob = " ".join((container.inner_text() or "").split())
-        acc = re.search(r"Winning\s+number\s*1\s*is\s*1.*?Winning\s+number\s*2\s*is\s*2.*?Winning\s+number\s*3\s*is\s*3", blob, re.I)
-        if not acc:
-            print("[parse] Rejected 1,2,3 from container (likely placeholder).")
+        acc_ok = re.search(
+            r"winning\s*number\s*1\s*is\s*1.*?winning\s*number\s*2\s*is\s*2.*?winning\s*number\s*3\s*is\s*3",
+            window, re.I
+        )
+        if not acc_ok:
+            print("[parse-winwin] Rejected 1,2,3 (likely placeholder).")
             return None
-
-    fb = _fireball_from_page(page, container)
-
-    if not (date_text and draw_text in ("Midday","Evening") and len(nums) == 3 and fb.isdigit()):
-        print(f"[parse] Incomplete -> date={date_text!r}, draw={draw_text!r}, nums={nums}, fb={fb!r}")
-        return None
 
     out = {
         "date_str": date_text,
@@ -411,8 +458,9 @@ def parse_detail_page(page):
         "num3": int(nums[2]),
         "fireball": fb,
     }
-    print(f"[parse] OK -> {out}")
+    print(f"[parse-winwin] OK -> {out}")
     return out
+
 
 def scrape_latest_cards(max_retries=2):
     for attempt in range(1, max_retries + 1):
