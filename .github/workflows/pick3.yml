@@ -9,6 +9,13 @@ jobs:
   run:
     runs-on: ubuntu-latest
 
+    # Make the secrets available to all steps in this job
+    env:
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      FIREBALL_DATA_SHEET_ID: ${{ secrets.FIREBALL_DATA_SHEET_ID }}
+      # Only needed if you actually use the base64 variant in your script
+      GCP_SERVICE_ACCOUNT_B64: ${{ secrets.GCP_SERVICE_ACCOUNT_B64 }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,18 +30,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ✅ This installs the headless Chromium binary + OS deps Playwright needs
-      - name: Install dependencies
+      # Install Playwright Chromium + system deps
+      - name: Install Playwright Chromium
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
           python -m playwright install --with-deps chromium
 
-      # Give the scraping step more time
-      - name: Run scraper
-        env:
-          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-          GCP_SERVICE_ACCOUNT_B64: ${{ secrets.GCP_SERVICE_ACCOUNT_B64 }}
+      # Optional: confirm envs exist (prints booleans only)
+      - name: Debug env presence
         run: |
-          python scrape_and_update.py
-        timeout-minutes: 10
+          python - <<'PY'
+          import os
+          print("HAS GCP_SERVICE_ACCOUNT:", bool(os.environ.get("GCP_SERVICE_ACCOUNT")))
+          print("HAS FIREBALL_DATA_SHEET_ID:", bool(os.environ.get("FIREBALL_DATA_SHEET_ID")))
+          PY
+
+      - name: Run scraper
+        run: python scrape_and_update.py
+        timeout-minutes: 15
