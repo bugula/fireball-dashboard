@@ -5,3 +5,6 @@ gspread
 oauth2client
 playwright
 pytz
+requests
+beautifulsoup4
+lxml
