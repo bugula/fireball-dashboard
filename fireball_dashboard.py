@@ -47,38 +47,6 @@ if not df.empty:
     # sort helper: Evening above Midday when sorting desc by draw_sort
     df["draw_sort"] = df["draw"].map({"Midday": 0, "Evening": 1})
 
-# ---------- Add New Drawing ----------
-# ---------- Add New Drawing ----------
-st.sidebar.header("➕ Add Latest Drawing")
-with st.sidebar.form("new_draw_form"):
-    est = pytz.timezone("US/Eastern")
-    today_est = datetime.now(est).date()
-    new_date = st.date_input("Draw Date", value=today_est)
-
-    # --- smart default for draw type ---
-    from datetime import time
-    now_est = datetime.now(est).time()
-    if now_est >= time(22, 30) or now_est < time(13, 45):
-        default_draw = "Evening"
-    else:
-        default_draw = "Midday"
-
-    draw_options = ["Midday", "Evening"]
-    draw_type = st.selectbox("Draw Type", draw_options,
-                             index=draw_options.index(default_draw))
-    # -----------------------------------
-
-    new_fireball = st.number_input("Fireball", 0, 9, step=1)
-    num1 = st.number_input("Pick 3 - Number 1", 0, 9, step=1)
-    num2 = st.number_input("Pick 3 - Number 2", 0, 9, step=1)
-    num3 = st.number_input("Pick 3 - Number 3", 0, 9, step=1)
-    submitted = st.form_submit_button("Add Drawing")
-
-    if submitted:
-        row = [str(new_date), draw_type, num1, num2, num3, new_fireball]
-        data_sheet.append_row(row)
-        st.sidebar.success(f"✅ Added {draw_type} draw {num1}{num2}{num3} + Fireball {new_fireball}")
-
 
 # ======================================================================
 #                           RECOMMENDATION ENGINE
@@ -532,6 +500,7 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
 
 
 
