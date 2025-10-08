@@ -494,36 +494,43 @@ if not df.empty:
     gap_df = gap_df.sort_values(["__sort_key", "Current Gap"], ascending=[False, False]).drop(columns="__sort_key")
 
     # Build highlighted HTML table
-    def row_html(row):
-        if row.get("Trigger?") == "Yes":
-            # darker highlight + forced dark text for readability
-            row_style = "background:#ffd36b; color:#111;"
-            cell_style = "text-align:center; color:#111; font-weight:600;"
-        else:
-            row_style = ""
-            cell_style = "text-align:center; color:#111;"
-        return (
-            f"<tr style='{row_style}'>"
-            f"<td style='{cell_style}'>{row['Fireball']}</td>"
-            f"<td style='{cell_style}'>{'' if pd.isna(row['Avg Gap']) else row['Avg Gap']}</td>"
-            f"<td style='{cell_style}'>{row['Current Gap']}</td>"
-            f"<td style='{cell_style}'>{'' if pd.isna(row['Overdue %']) else int(row['Overdue %'])}%</td>"
-            f"<td style='{cell_style}'>{'' if pd.isna(row['Hazard@Gap']) else row['Hazard@Gap']}</td>"
-            f"<td style='{cell_style}'>{'' if pd.isna(row['Hazard Thr(75%)']) else row['Hazard Thr(75%)']}</td>"
-            f"<td style='{cell_style}'>{row['Trigger?']}</td>"
-            "</tr>"
-        )
+# Build highlighted HTML table
+def row_html(row):
+    # default (non-highlighted) rows: white text
+    base_cell = "text-align:center; color:#fff;"
+    # highlighted rows: darker text for contrast on the yellow
+    hi_row_style  = "background:#ffd36b;"
+    hi_cell_style = "text-align:center; color:#111; font-weight:700;"
+
+    if row.get("Trigger?") == "Yes":
+        row_style = hi_row_style
+        cell_style = hi_cell_style
+    else:
+        row_style = ""
+        cell_style = base_cell
+
+    return (
+        f"<tr style='{row_style}'>"
+        f"<td style='{cell_style}'>{row['Fireball']}</td>"
+        f"<td style='{cell_style}'>{'' if pd.isna(row['Avg Gap']) else row['Avg Gap']}</td>"
+        f"<td style='{cell_style}'>{row['Current Gap']}</td>"
+        f"<td style='{cell_style}'>{'' if pd.isna(row['Overdue %']) else int(row['Overdue %'])}%</td>"
+        f"<td style='{cell_style}'>{'' if pd.isna(row['Hazard@Gap']) else row['Hazard@Gap']}</td>"
+        f"<td style='{cell_style}'>{'' if pd.isna(row['Hazard Thr(75%)']) else row['Hazard Thr(75%)']}</td>"
+        f"<td style='{cell_style}'>{row['Trigger?']}</td>"
+        "</tr>"
+    )
 
     header_html = (
         "<table style='width:100%; border-collapse:collapse; font-size:16px;'>"
         "<thead><tr>"
-        "<th style='color:#111;'>Fireball</th>"
-        "<th style='color:#111;'>Avg Gap</th>"
-        "<th style='color:#111;'>Current Gap</th>"
-        "<th style='color:#111;'>Overdue %</th>"
-        "<th style='color:#111;'>Hazard@Gap</th>"
-        "<th style='color:#111;'>Hazard Thr(75%)</th>"
-        "<th style='color:#111;'>Trigger?</th>"
+        "<th style='color:#fff;'>Fireball</th>"
+        "<th style='color:#fff;'>Avg Gap</th>"
+        "<th style='color:#fff;'>Current Gap</th>"
+        "<th style='color:#fff;'>Overdue %</th>"
+        "<th style='color:#fff;'>Hazard@Gap</th>"
+        "<th style='color:#fff;'>Hazard Thr(75%)</th>"
+        "<th style='color:#fff;'>Trigger?</th>"
         "</tr></thead><tbody>"
     )
     body_html = "".join(row_html(r) for _, r in gap_df.iterrows())
@@ -673,3 +680,4 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
