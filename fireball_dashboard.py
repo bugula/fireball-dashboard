@@ -214,7 +214,7 @@ existing_rec = next(
     (
         row for row in rec_data
         if str(row.get("date")) == rec_date_str
-        and ((row.get("draw") or "").strip().str.title() if hasattr(row.get("draw"), "strip") else str(row.get("draw"))) == draw_type_for_rec
+        and (str(row.get("draw") or "").strip().title() == draw_type_for_rec)
     ),
     None
 )
@@ -692,3 +692,4 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
