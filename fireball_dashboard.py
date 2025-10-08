@@ -3,10 +3,11 @@ import pandas as pd
 import plotly.express as px
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import json
 import pytz
+import numpy as np
 
 # ---------- styling helpers ----------
 def style_number(num, fireball=False):
@@ -44,13 +45,148 @@ if not df.empty:
     df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
     df["draw"] = df["draw"].astype(str).str.strip().str.title()   # "Midday" / "Evening"
     df["fireball"] = df["fireball"].astype(str)
+    # ensure numeric digits as strings for slots
+    for c in ["num1", "num2", "num3"]:
+        if c in df.columns:
+            df[c] = df[c].astype(str).str.extract(r"(\d)", expand=False).fillna("0")
     # sort helper: Evening above Midday when sorting desc by draw_sort
     df["draw_sort"] = df["draw"].map({"Midday": 0, "Evening": 1})
 
+# ======================================================================
+#                      UPGRADE HELPERS (new)
+# ======================================================================
+
+DIGITS = [str(i) for i in range(10)]
+CT = pytz.timezone("America/Chicago")
+
+def decayed_probs(series_dates, series_vals, tau_days=28, alpha=1.0, domain=DIGITS):
+    """
+    Exponentially-decayed relative frequencies with Dirichlet smoothing.
+    series_dates: iterable of dates (date or datetime)
+    series_vals:  iterable of digit strings ("0".."9")
+    Returns pd.Series indexed by domain with probabilities.
+    """
+    if len(series_vals) == 0:
+        return pd.Series([1/len(domain)]*len(domain), index=domain, dtype=float)
+
+    sdates = pd.to_datetime(pd.Series(series_dates))
+    svals  = pd.Series(series_vals).astype(str)
+    today  = sdates.max()
+    ages   = (today - sdates).dt.days.clip(lower=0)
+    weights = np.exp(-ages / float(tau_days))
+
+    dfw = pd.DataFrame({"d": svals, "w": weights})
+    counts = dfw.groupby("d")["w"].sum()
+    for k in domain:
+        if k not in counts.index:
+            counts.loc[k] = 0.0
+    counts = counts.sort_index()
+
+    probs = (counts + alpha) / (counts.sum() + alpha*len(domain))
+    return probs.reindex(domain).astype(float)
+
+def weekday_name(d):
+    return pd.to_datetime(d).day_name()
+
+def conditional_uplift(df_all, col, base_probs, draw_type=None, weekday=None, eps=1e-6):
+    """
+    Ratio p(x | conditions)/p(x) to nudge base_probs for context.
+    col: "fireball" or "num1"/"num2"/"num3"
+    """
+    filt = pd.Series(True, index=df_all.index)
+    if draw_type:
+        filt &= (df_all["draw"] == draw_type)
+    if weekday:
+        # FIXED: use .dt.day_name() for Series
+        filt &= (pd.to_datetime(df_all["date"]).dt.day_name() == weekday)
+
+    if filt.any():
+        # Use simple relative freq for uplift (already applying decay on base).
+        sub = df_all.loc[filt, col].astype(str).value_counts()
+        sub = sub.reindex(base_probs.index, fill_value=0).astype(float)
+        sub = (sub + eps) / (sub.sum() + eps*len(base_probs))
+        upl = (sub / (base_probs + eps)).clip(0.5, 1.5)  # guardrails
+        adj = (base_probs * upl)
+        adj = adj / adj.sum()
+        return adj
+    return base_probs
+
+def top_k_combos(p1, p2, p3, top_per_slot=3, k=10):
+    idx1 = p1.sort_values(ascending=False).index[:top_per_slot]
+    idx2 = p2.sort_values(ascending=False).index[:top_per_slot]
+    idx3 = p3.sort_values(ascending=False).index[:top_per_slot]
+    rows = []
+    for a in idx1:
+        for b in idx2:
+            for c in idx3:
+                score = float(p1[a] * p2[b] * p3[c])
+                rows.append(("".join([a,b,c]), score))
+    rows.sort(key=lambda x: x[1], reverse=True)
+    return rows[:k]
+
+def gap_stats_and_hazard(positions):
+    """
+    positions: sorted list of indices where a fireball appeared (chronological).
+    returns (avg_gap, current_gap, hazard_dict)
+    hazard_dict: {gap: hazard} using empirical gaps
+    """
+    if len(positions) == 0:
+        return None, None, {}
+    if len(positions) == 1:
+        return None, None, {}
+
+    gaps = [positions[i]-positions[i-1] for i in range(1, len(positions))]
+    avg_gap = np.mean(gaps) if gaps else None
+
+    # empirical hazard h(g) = count(g) / count(gaps >= g)
+    from collections import Counter
+    c = Counter(gaps)
+    keys = sorted(c.keys())
+    tail = {}
+    running = 0
+    for g in sorted(keys, reverse=True):
+        running += c[g]
+        tail[g] = running
+    hazard = {g: c[g]/tail[g] for g in keys}
+    return avg_gap, gaps[-1], hazard  # current_gap since last success in gaps-space
+
+def overdue_trigger(current_gap, hazard):
+    if not hazard or current_gap is None:
+        return False, None, None
+    # nearest gap key <= current_gap
+    candidates = [g for g in hazard if g <= current_gap]
+    if not candidates:
+        return False, None, None
+    g0 = max(candidates)
+    h = float(hazard[g0])
+    thr = float(np.percentile(list(hazard.values()), 75))
+    return (h >= thr), h, thr
+
+# ---------- helper to ALWAYS produce alternates for display ----------
+def compute_display_alternates(df_all, rec_date, draw_type_for_rec, top_per_slot=3, k=5):
+    """Recompute combos for display-only (used even when a rec already exists)."""
+    if df_all.empty:
+        return []
+
+    rec_weekday = weekday_name(rec_date)
+    chron_all = df_all.sort_values(["date", "draw_sort"]).reset_index(drop=True)
+
+    # slot-wise base probs
+    p1 = decayed_probs(chron_all["date"], chron_all["num1"], tau_days=28, alpha=1.0, domain=DIGITS)
+    p2 = decayed_probs(chron_all["date"], chron_all["num2"], tau_days=28, alpha=1.0, domain=DIGITS)
+    p3 = decayed_probs(chron_all["date"], chron_all["num3"], tau_days=28, alpha=1.0, domain=DIGITS)
+
+    # context uplift
+    p1 = conditional_uplift(chron_all, "num1", p1, draw_type=draw_type_for_rec, weekday=rec_weekday)
+    p2 = conditional_uplift(chron_all, "num2", p2, draw_type=draw_type_for_rec, weekday=rec_weekday)
+    p3 = conditional_uplift(chron_all, "num3", p3, draw_type=draw_type_for_rec, weekday=rec_weekday)
+
+    combos = top_k_combos(p1, p2, p3, top_per_slot=top_per_slot, k=k)
+    total = sum(s for _, s in combos) or 1.0
+    return [(c, s/total) for c, s in combos]
 
 # ======================================================================
 #                           RECOMMENDATION ENGINE
-#            (data-driven slot + locked to logged recommendation)
 # ======================================================================
 
 # 1) Decide which draw to recommend based on what's already logged in df
@@ -96,7 +232,6 @@ existing_rec = next(
     None
 )
 
-
 if existing_rec:
     # ----- use logged rec (ensures banner matches sheet) -----
     fire_rec  = str(existing_rec.get("recommended_fireball"))
@@ -125,37 +260,66 @@ if existing_rec:
         unsafe_allow_html=True
     )
 
+    # --- ALWAYS show alternates (display-only recompute) ---
+    norm = compute_display_alternates(df, rec_date, draw_type_for_rec, top_per_slot=3, k=5)
+    if len(norm) > 1:
+        chips = []
+        for combo, s in norm[:3]:
+            pct = f"{s*100:.0f}%"
+            chip = (
+                f"<span style='display:inline-flex; align-items:center; gap:6px; "
+                f"background:#e8f3ff; border:1px solid #bcdcff; border-radius:999px; "
+                f"padding:4px 10px; margin:4px;'>"
+                f"{''.join(style_number(n) for n in combo)}"
+                f"<span style='font-weight:600; color:#0b4a8b;'> {pct}</span>"
+                f"</span>"
+            )
+            chips.append(chip)
+        st.markdown("<div style='text-align:center; margin-top:6px;'>Alternates: " + " ".join(chips) + "</div>", unsafe_allow_html=True)
+
 else:
-    # ----- compute a new recommendation -----
-    if not df.empty:
-        recent_window = df[pd.to_datetime(df["date"]) > (pd.to_datetime(df["date"]).max() - pd.Timedelta(days=14))]
+    # ----- compute a new recommendation (UPGRADED) -----
+    if df.empty:
+        st.info("Not enough data yet to compute a recommendation.")
     else:
-        recent_window = df
+        # Context for uplift
+        rec_weekday = weekday_name(rec_date)
 
-    # Fireball
-    fire_rec = None
-    if not df.empty and not recent_window.empty:
-        recent_fire   = recent_window["fireball"].value_counts(normalize=True)
-        overall_fire  = df["fireball"].value_counts(normalize=True)
-        # 25% recent, 75% overall
-        fire_combined = (0.25 * recent_fire.add(0, fill_value=0)) + (0.75 * overall_fire)
-        fire_rec = fire_combined.idxmax() if not fire_combined.empty else None
+        chron_all = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
 
-    # Pick 3 (slot-wise)
-    if not df.empty and not recent_window.empty:
-        pick3 = []
-        for col in ["num1", "num2", "num3"]:
-            recent_freq = recent_window[col].value_counts(normalize=True)
-            overall_freq = df[col].value_counts(normalize=True)
-            combined = (0.25 * recent_freq.add(0, fill_value=0)) + (0.75 * overall_freq)
-            pick3.append(str(combined.idxmax()) if not combined.empty else "0")
-    else:
-        pick3 = ["0", "0", "0"]
+        # Fireball base (decayed + Bayesian)
+        fire_probs_base = decayed_probs(
+            series_dates=chron_all["date"],
+            series_vals =chron_all["fireball"],
+            tau_days=28, alpha=1.0, domain=DIGITS
+        )
+        # Apply uplift for draw type and weekday
+        fire_probs = conditional_uplift(chron_all, "fireball", fire_probs_base,
+                                        draw_type=draw_type_for_rec, weekday=rec_weekday)
 
-    if fire_rec:
-        pick3_html    = "".join([style_number(n) for n in pick3])
+        # Slot-wise base probs
+        p1 = decayed_probs(chron_all["date"], chron_all["num1"], tau_days=28, alpha=1.0, domain=DIGITS)
+        p2 = decayed_probs(chron_all["date"], chron_all["num2"], tau_days=28, alpha=1.0, domain=DIGITS)
+        p3 = decayed_probs(chron_all["date"], chron_all["num3"], tau_days=28, alpha=1.0, domain=DIGITS)
+
+        # Apply the same uplift to slots (from historical correlations)
+        p1 = conditional_uplift(chron_all, "num1", p1, draw_type=draw_type_for_rec, weekday=rec_weekday)
+        p2 = conditional_uplift(chron_all, "num2", p2, draw_type=draw_type_for_rec, weekday=rec_weekday)
+        p3 = conditional_uplift(chron_all, "num3", p3, draw_type=draw_type_for_rec, weekday=rec_weekday)
+
+        # Top-K combos
+        combos = top_k_combos(p1, p2, p3, top_per_slot=3, k=5)
+        # Normalize combo scores for a simple "confidence bar"
+        total_score = sum(s for _, s in combos) or 1.0
+        norm = [(c, s/total_score) for c, s in combos]
+
+        # Choose top1 for logging (keep your rec_sheet schema)
+        top_combo, top_combo_score = norm[0]
+        fire_rec = fire_probs.sort_values(ascending=False).index[0]
+
+        # Banner
+        pick3_html    = "".join([style_number(n) for n in list(top_combo)])
         fireball_html = style_number(fire_rec, fireball=True)
-
         st.markdown(
             f"<div style='background-color:#1f1c24; padding:15px; border-radius:10px; text-align:center;'>"
             f"<div style='font-size:20px; font-weight:bold; color:white;'>{pick3_html} + {fireball_html}</div>"
@@ -163,8 +327,24 @@ else:
             unsafe_allow_html=True
         )
 
+        # Small list of alternates (now guaranteed to show)
+        if len(norm) > 1:
+            chips = []
+            for combo, s in norm[:3]:
+                pct = f"{s*100:.0f}%"
+                chip = (
+                    f"<span style='display:inline-flex; align-items:center; gap:6px; "
+                    f"background:#e8f3ff; border:1px solid #bcdcff; border-radius:999px; "
+                    f"padding:4px 10px; margin:4px;'>"
+                    f"{''.join(style_number(n) for n in combo)}"
+                    f"<span style='font-weight:600; color:#0b4a8b;'> {pct}</span>"
+                    f"</span>"
+                )
+                chips.append(chip)
+            st.markdown("<div style='text-align:center; margin-top:6px;'>Alternates: " + " ".join(chips) + "</div>", unsafe_allow_html=True)
+
         # ----- log once per (date, draw) -----
-        rec_sheet.append_row([rec_date_str, draw_type_for_rec, ''.join(pick3), fire_rec])
+        rec_sheet.append_row([rec_date_str, draw_type_for_rec, top_combo, fire_rec])
 
 # ======================================================================
 #                   TOP 2 OVERDUE NOW (chips under banner)
@@ -173,21 +353,19 @@ if not df.empty:
     chron_all = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
     chron_all["pos"] = chron_all.index
     results_for_rank = []
-    for d in [str(i) for i in range(10)]:
+    for d in DIGITS:
         positions = chron_all.index[chron_all["fireball"] == d].tolist()
         if len(positions) > 1:
-            gaps = [positions[i] - positions[i-1] for i in range(1, len(positions))]
+            gaps = [positions[i] - positions[i-1]] if len(positions) == 2 else [positions[i] - positions[i-1] for i in range(1, len(positions))]
             avg_gap = sum(gaps) / len(gaps)
             current_gap = (len(chron_all) - 1) - positions[-1]
             if avg_gap > 0:
                 ratio = current_gap / avg_gap
                 results_for_rank.append((d, current_gap, avg_gap, ratio))
         elif len(positions) == 1:
-            # Seen once: treat current gap as distance since that hit
             current_gap = (len(chron_all) - 1) - positions[-1]
             results_for_rank.append((d, current_gap, None, -1))
 
-    # Sort by ratio desc; take top 2 with valid avg
     top2 = [t for t in sorted(results_for_rank, key=lambda x: x[3], reverse=True) if t[2] is not None][:2]
 
     if top2:
@@ -205,30 +383,6 @@ if not df.empty:
             chips.append(chip)
         chips_html = "<div style='text-align:center; margin-top:6px;'>Overdue now: " + " ".join(chips) + "</div>"
         st.markdown(chips_html, unsafe_allow_html=True)
-
-# 3) Overdue highlight (based on full history)
-#if not df.empty:
-#    chron = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
-#    chron["pos"] = chron.index
-#    last_pos = chron.groupby("fireball")["pos"].max()
-
-#    N = len(chron)
-#    gaps = {}
-#    for d in [str(i) for i in range(10)]:
-#        gaps[d] = (N - 1) - int(last_pos.loc[d]) if d in last_pos.index else N
-
-#    most_overdue = max(gaps, key=gaps.get)
-#    gap_len = gaps[most_overdue]
-
- #   overdue_html = (
- #       f"<div style='font-size:16px; margin-top:10px; text-align:center;'>"
- #       f"⏳ Overdue: "
- #       f"<span style='display:inline-block; width:35px; height:35px; border-radius:50%; "
- #       f"background-color:gray; color:white; text-align:center; line-height:35px; "
- #       f"font-weight:bold; margin-left:5px;'>{most_overdue}</span> "
- #       f"({gap_len} draws since last hit)</div>"
- #   )
- #   st.markdown(overdue_html, unsafe_allow_html=True)
 
 # ======================================================================
 #                           LAST 14 DRAWS (styled)
@@ -269,11 +423,11 @@ if not df.empty:
     freq14 = (df.sort_values(["date", "draw_sort"], ascending=[False, False])
                 .head(14)["fireball"]
                 .value_counts()
-                .reindex([str(i) for i in range(10)], fill_value=0)
+                .reindex(DIGITS, fill_value=0)
                 .reset_index())
     freq14.columns = ["Fireball", "Count"]
     fig0 = px.bar(freq14, x="Fireball", y="Count", text="Count", title="Last 14 Draws")
-    fig0.update_xaxes(type="category", categoryorder="array", categoryarray=[str(i) for i in range(10)])
+    fig0.update_xaxes(type="category", categoryorder="array", categoryarray=DIGITS)
     fig0.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
     st.plotly_chart(fig0, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
@@ -285,68 +439,91 @@ if not df.empty:
     chron = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
     chron["pos"] = chron.index
     last_pos = chron.groupby("fireball")["pos"].max()
-    digits = [str(i) for i in range(10)]
     N = len(chron)
     gaps = []
-    for d in digits:
+    for d in DIGITS:
         gap = (N - 1) - int(last_pos.loc[d]) if d in last_pos.index else N
         gaps.append({"Fireball": d, "Draws Since Last Seen": gap})
     gaps_df = pd.DataFrame(gaps)
     fig_gaps = px.bar(gaps_df, x="Fireball", y="Draws Since Last Seen", text="Draws Since Last Seen",
                       title="How Long Since Each Fireball Last Hit")
-    fig_gaps.update_xaxes(type="category", categoryorder="array", categoryarray=digits)
+    fig_gaps.update_xaxes(type="category", categoryorder="array", categoryarray=DIGITS)
     fig_gaps.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
     st.plotly_chart(fig_gaps, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
 # ======================================================================
-#                         AVG CYCLES (tweaked)
+#                         AVG CYCLES + HAZARD (new)
 # ======================================================================
 if not df.empty:
     st.markdown("<br>", unsafe_allow_html=True)
-    st.subheader("🔄 Fireball Cycle Analysis (Average vs Current Gaps)")
+    st.subheader("🔄 Fireball Cycle Analysis (Avg vs Current + Hazard)")
 
     chron = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
     chron["pos"] = chron.index
+    N = len(chron)
 
     results = []
-    for d in [str(i) for i in range(10)]:
+    for d in DIGITS:
         positions = chron.index[chron["fireball"] == d].tolist()
         if len(positions) > 1:
+            # avg gap, "current gap" = distance since last hit in draw counts
             gap_lengths = [positions[i] - positions[i-1] for i in range(1, len(positions))]
-            avg_gap = sum(gap_lengths) / len(gap_lengths)
+            avg_gap = float(np.mean(gap_lengths)) if gap_lengths else None
             current_gap = len(chron) - 1 - positions[-1]
-            overdue_pct = (current_gap / avg_gap) * 100 if avg_gap > 0 else None
-            results.append({"Fireball": d, "Avg Gap": round(avg_gap, 1), "Current Gap": current_gap,
-                            "Overdue %": round(overdue_pct, 0) if overdue_pct is not None else None,
-                            "Status": "Overdue" if avg_gap and current_gap >= avg_gap else "On track"})
+            overdue_pct = (current_gap / avg_gap) * 100 if avg_gap else None
+
+            # hazard based on empirical gaps
+            _, last_gap_in_gaps, hazard = gap_stats_and_hazard(positions)
+            trig, hz, thr = overdue_trigger(last_gap_in_gaps, hazard)
+            results.append({
+                "Fireball": d,
+                "Avg Gap": round(avg_gap, 1) if avg_gap else None,
+                "Current Gap": current_gap,
+                "Overdue %": round(overdue_pct, 0) if overdue_pct is not None else None,
+                "Hazard@Gap": None if hz is None else round(hz, 3),
+                "Hazard Thr(75%)": None if thr is None else round(thr, 3),
+                "Trigger?": "Yes" if trig else "No"
+            })
         else:
             current_gap = len(chron)  # never/once seen
             results.append({"Fireball": d, "Avg Gap": None, "Current Gap": current_gap,
-                            "Overdue %": None, "Status": "On track"})
+                            "Overdue %": None, "Hazard@Gap": None, "Hazard Thr(75%)": None, "Trigger?": "No"})
 
     gap_df = pd.DataFrame(results)
-
-    # Sort by most overdue first (Overdue % desc, None last)
     gap_df["__sort_key"] = gap_df["Overdue %"].fillna(-1)
     gap_df = gap_df.sort_values(["__sort_key", "Current Gap"], ascending=[False, False]).drop(columns="__sort_key")
 
-    # Build highlighted HTML table (Overdue rows shaded)
+    # Build highlighted HTML table
     def row_html(row):
+        if row.get("Trigger?") == "Yes":
+            # darker highlight + forced dark text for readability
+            row_style = "background:#ffd36b; color:#111;"
+            cell_style = "text-align:center; color:#111; font-weight:600;"
+        else:
+            row_style = ""
+            cell_style = "text-align:center; color:#111;"
         return (
-            "<tr>"
-            f"<td style='text-align:center;'>{row['Fireball']}</td>"
-            f"<td style='text-align:center;'>{'' if pd.isna(row['Avg Gap']) else row['Avg Gap']}</td>"
-            f"<td style='text-align:center;'>{row['Current Gap']}</td>"
-            f"<td style='text-align:center;'>{'' if pd.isna(row['Overdue %']) else int(row['Overdue %'])}%</td>"
-            f"<td style='text-align:center;'>{row['Status']}</td>"
+            f"<tr style='{row_style}'>"
+            f"<td style='{cell_style}'>{row['Fireball']}</td>"
+            f"<td style='{cell_style}'>{'' if pd.isna(row['Avg Gap']) else row['Avg Gap']}</td>"
+            f"<td style='{cell_style}'>{row['Current Gap']}</td>"
+            f"<td style='{cell_style}'>{'' if pd.isna(row['Overdue %']) else int(row['Overdue %'])}%</td>"
+            f"<td style='{cell_style}'>{'' if pd.isna(row['Hazard@Gap']) else row['Hazard@Gap']}</td>"
+            f"<td style='{cell_style}'>{'' if pd.isna(row['Hazard Thr(75%)']) else row['Hazard Thr(75%)']}</td>"
+            f"<td style='{cell_style}'>{row['Trigger?']}</td>"
             "</tr>"
         )
-
 
     header_html = (
         "<table style='width:100%; border-collapse:collapse; font-size:16px;'>"
         "<thead><tr>"
-        "<th>Fireball</th><th>Avg Gap</th><th>Current Gap</th><th>Overdue %</th><th>Status</th>"
+        "<th style='color:#111;'>Fireball</th>"
+        "<th style='color:#111;'>Avg Gap</th>"
+        "<th style='color:#111;'>Current Gap</th>"
+        "<th style='color:#111;'>Overdue %</th>"
+        "<th style='color:#111;'>Hazard@Gap</th>"
+        "<th style='color:#111;'>Hazard Thr(75%)</th>"
+        "<th style='color:#111;'>Trigger?</th>"
         "</tr></thead><tbody>"
     )
     body_html = "".join(row_html(r) for _, r in gap_df.iterrows())
@@ -360,24 +537,20 @@ if not df.empty:
         barmode="group",
         title="Average vs Current Gaps by Fireball"
     )
-
-    # Force all 10 fireballs (0–9) on the x-axis
     fig_gap_compare.update_layout(
         xaxis=dict(
             tickmode="array",
-            tickvals=[str(i) for i in range(10)],  # values 0–9
-            ticktext=[str(i) for i in range(10)],  # labels 0–9
+            tickvals=DIGITS,
+            ticktext=DIGITS,
             fixedrange=True
         ),
         yaxis=dict(fixedrange=True)
     )
-
     st.plotly_chart(
         fig_gap_compare,
         use_container_width=True,
         config={"displayModeBar": False, "scrollZoom": False}
     )
-
 
 # ======================================================================
 #                           HEATMAP
@@ -388,14 +561,14 @@ if not df.empty:
     weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     df["weekday"] = pd.to_datetime(df["date"]).dt.day_name()
     heatmap_data = df.groupby(["weekday", "fireball"]).size().reset_index(name="count")
-    fireball_order = [str(i) for i in range(10)]
+    fireball_order = DIGITS
     pivot = (heatmap_data.pivot(index="weekday", columns="fireball", values="count")
              .reindex(weekday_order).fillna(0)[fireball_order])
     fig3 = px.imshow(pivot, labels=dict(x="Fireball", y="Weekday", color="Count"),
                      x=fireball_order, y=weekday_order,
                      aspect="auto", color_continuous_scale="Viridis",
                      title="Fireball Frequency by Weekday")
-    fig3.update_xaxes(tickmode="array", tickvals=list(range(10)), ticktext=[str(i) for i in range(10)], fixedrange=True)
+    fig3.update_xaxes(tickmode="array", tickvals=list(range(10)), ticktext=DIGITS, fixedrange=True)
     fig3.update_yaxes(fixedrange=True)
     st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
