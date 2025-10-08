@@ -161,6 +161,17 @@ def overdue_trigger(current_gap, hazard):
     thr = float(np.percentile(list(hazard.values()), 75))
     return (h >= thr), h, thr
 
+# NEW: simple combined freq (25% recent / 75% overall) for alternates
+def _combined_freq(col, recent_window, df, w_recent=0.25, w_overall=0.75):
+    recent = recent_window[col].value_counts(normalize=True)
+    overall = df[col].value_counts(normalize=True)
+    comb = (w_recent * recent.add(0, fill_value=0) + w_overall * overall).sort_values(ascending=False)
+    # ensure all digits exist
+    for d in range(10):
+        if d not in comb.index:
+            comb.loc[d] = 0.0
+    return comb.sort_values(ascending=False)
+
 # ======================================================================
 #                           RECOMMENDATION ENGINE
 # ======================================================================
@@ -203,10 +214,13 @@ existing_rec = next(
     (
         row for row in rec_data
         if str(row.get("date")) == rec_date_str
-        and ((row.get("draw") or "").strip().title() == draw_type_for_rec)
+        and ((row.get("draw") or "").strip().str.title() if hasattr(row.get("draw"), "strip") else str(row.get("draw"))) == draw_type_for_rec
     ),
     None
 )
+
+primary_pick3 = None
+primary_fire = None
 
 if existing_rec:
     # ----- use logged rec (ensures banner matches sheet) -----
@@ -235,6 +249,10 @@ if existing_rec:
         f"</div>",
         unsafe_allow_html=True
     )
+
+    # capture for alternates row
+    primary_pick3 = digits[:]  # list of strings
+    primary_fire  = fire_rec
 
 else:
     # ----- compute a new recommendation (UPGRADED) -----
@@ -286,24 +304,76 @@ else:
             unsafe_allow_html=True
         )
 
-        # Small list of alternates
-        if len(norm) > 1:
-            chips = []
-            for combo, s in norm[:3]:
-                pct = f"{s*100:.0f}%"
-                chip = (
-                    f"<span style='display:inline-flex; align-items:center; gap:6px; "
-                    f"background:#e8f3ff; border:1px solid #bcdcff; border-radius:999px; "
-                    f"padding:4px 10px; margin:4px;'>"
-                    f"{''.join(style_number(n) for n in combo)}"
-                    f"<span style='font-weight:600; color:#0b4a8b;'> {pct}</span>"
-                    f"</span>"
-                )
-                chips.append(chip)
-            st.markdown("<div style='text-align:center; margin-top:6px;'>Alternates: " + " ".join(chips) + "</div>", unsafe_allow_html=True)
+        # capture for alternates row
+        primary_pick3 = list(top_combo)
+        primary_fire  = fire_rec
 
         # ----- log once per (date, draw) -----
         rec_sheet.append_row([rec_date_str, draw_type_for_rec, top_combo, fire_rec])
+
+# ---------- Alternates (shown under the banner for both branches) ----------
+try:
+    if not df.empty and primary_pick3 and primary_fire:
+        # build combined freq per position using the same 25/75 blend
+        if not df.empty:
+            recent_window = df[pd.to_datetime(df["date"]) > (pd.to_datetime(df["date"]).max() - pd.Timedelta(days=14))]
+        else:
+            recent_window = df
+
+        f1 = _combined_freq("num1", recent_window, df)
+        f2 = _combined_freq("num2", recent_window, df)
+        f3 = _combined_freq("num3", recent_window, df)
+
+        # top-2 options per slot
+        top1 = [int(primary_pick3[0]), int(primary_pick3[1]), int(primary_pick3[2])]
+        alt1 = [d for d in f1.index.tolist() if d != top1[0]][0] if len(f1) > 1 else top1[0]
+        alt2 = [d for d in f2.index.tolist() if d != top1[1]][0] if len(f2) > 1 else top1[1]
+        alt3 = [d for d in f3.index.tolist() if d != top1[2]][0] if len(f3) > 1 else top1[2]
+
+        # generate up to 3 simple variations (change exactly one slot)
+        cands = [
+            [alt1, top1[1], top1[2]],
+            [top1[0], alt2, top1[2]],
+            [top1[0], top1[1], alt3],
+        ]
+
+        # score = product of slot weights (use combined freq)
+        def score(c):
+            return float(f1.get(c[0], 0)) * float(f2.get(c[1], 0)) * float(f3.get(c[2], 0))
+
+        # dedupe + drop identical to primary
+        seen = set()
+        primary_tuple = tuple(top1)
+        cands_scored = []
+        for c in cands:
+            t = tuple(c)
+            if t == primary_tuple or t in seen:
+                continue
+            seen.add(t)
+            cands_scored.append((c, score(c)))
+
+        # normalize to % for a friendly chip label
+        total = sum(s for _, s in cands_scored) or 1.0
+        chips = []
+        for (c, s) in sorted(cands_scored, key=lambda x: x[1], reverse=True)[:3]:
+            pct = int(round(100 * s / total))
+            chips.append(
+                f"<span style='display:inline-flex;align-items:center;gap:8px;"
+                f"background:#26262a;border:1px solid #3a3a40;border-radius:999px;"
+                f"padding:4px 10px;margin:4px;'>"
+                f"{style_number(str(c[0]))}{style_number(str(c[1]))}{style_number(str(c[2]))}"
+                f"<span style='opacity:0.8;'>• {pct}%</span>"
+                f"</span>"
+            )
+        if chips:
+            st.markdown(
+                "<div style='text-align:center;margin-top:6px;'>Alternates: "
+                + " ".join(chips) + "</div>",
+                unsafe_allow_html=True
+            )
+except Exception:
+    # keep UI resilient if anything goes sideways
+    pass
 
 # ======================================================================
 #                   TOP 2 OVERDUE NOW (chips under banner)
@@ -452,11 +522,12 @@ if not df.empty:
     gap_df["__sort_key"] = gap_df["Overdue %"].fillna(-1)
     gap_df = gap_df.sort_values(["__sort_key", "Current Gap"], ascending=[False, False]).drop(columns="__sort_key")
 
-    # Build highlighted HTML table
+    # Build readable HTML table (no background fill; subtle border for "Trigger? Yes")
     def row_html(row):
-        shade = "background:#fff7e6;" if row.get("Trigger?") == "Yes" else ""
+        emphasized = row.get("Trigger?") == "Yes"
+        border = "1px solid rgba(255,215,0,0.35)" if emphasized else "1px solid transparent"
         return (
-            f"<tr style='{shade}'>"
+            f"<tr style='border:{border};'>"
             f"<td style='text-align:center;'>{row['Fireball']}</td>"
             f"<td style='text-align:center;'>{'' if pd.isna(row['Avg Gap']) else row['Avg Gap']}</td>"
             f"<td style='text-align:center;'>{row['Current Gap']}</td>"
