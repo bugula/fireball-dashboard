@@ -538,7 +538,6 @@ if not df.empty:
             body_html = "".join(row_html(r) for _, r in gap_df.iterrows())
             table_html = header_html + body_html + "</tbody></table>"
             st.markdown(table_html, unsafe_allow_html=True)
-            st.caption(f"{len(gap_df)} rows")  # tiny debug helper; remove if you like
         except Exception as e:
             st.error(f"Failed to render table: {e}")
 
@@ -681,6 +680,7 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
 
 
 
