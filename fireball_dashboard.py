@@ -493,7 +493,6 @@ if not df.empty:
     gap_df["__sort_key"] = gap_df["Overdue %"].fillna(-1)
     gap_df = gap_df.sort_values(["__sort_key", "Current Gap"], ascending=[False, False]).drop(columns="__sort_key")
 
-    # Build highlighted HTML table
 # Build highlighted HTML table
 def row_html(row):
     # default (non-highlighted) rows: white text
@@ -680,4 +679,5 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
 
