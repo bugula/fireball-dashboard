@@ -452,7 +452,7 @@ if not df.empty:
     st.plotly_chart(fig_gaps, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
 # ======================================================================
-#                         AVG CYCLES + HAZARD (new)
+#                         AVG CYCLES + HAZARD (fixed)
 # ======================================================================
 if not df.empty:
     st.markdown("<br>", unsafe_allow_html=True)
@@ -460,19 +460,16 @@ if not df.empty:
 
     chron = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
     chron["pos"] = chron.index
-    N = len(chron)
 
     results = []
     for d in DIGITS:
         positions = chron.index[chron["fireball"] == d].tolist()
         if len(positions) > 1:
-            # avg gap, "current gap" = distance since last hit in draw counts
             gap_lengths = [positions[i] - positions[i-1] for i in range(1, len(positions))]
             avg_gap = float(np.mean(gap_lengths)) if gap_lengths else None
             current_gap = len(chron) - 1 - positions[-1]
             overdue_pct = (current_gap / avg_gap) * 100 if avg_gap else None
 
-            # hazard based on empirical gaps
             _, last_gap_in_gaps, hazard = gap_stats_and_hazard(positions)
             trig, hz, thr = overdue_trigger(last_gap_in_gaps, hazard)
             results.append({
@@ -485,78 +482,83 @@ if not df.empty:
                 "Trigger?": "Yes" if trig else "No"
             })
         else:
-            current_gap = len(chron)  # never/once seen
-            results.append({"Fireball": d, "Avg Gap": None, "Current Gap": current_gap,
-                            "Overdue %": None, "Hazard@Gap": None, "Hazard Thr(75%)": None, "Trigger?": "No"})
+            current_gap = len(chron)
+            results.append({
+                "Fireball": d, "Avg Gap": None, "Current Gap": current_gap,
+                "Overdue %": None, "Hazard@Gap": None, "Hazard Thr(75%)": None, "Trigger?": "No"
+            })
 
     gap_df = pd.DataFrame(results)
-    gap_df["__sort_key"] = gap_df["Overdue %"].fillna(-1)
-    gap_df = gap_df.sort_values(["__sort_key", "Current Gap"], ascending=[False, False]).drop(columns="__sort_key")
-
-# Build highlighted HTML table
-def row_html(row):
-    # default (non-highlighted) rows: white text
-    base_cell = "text-align:center; color:#fff;"
-    # highlighted rows: darker text for contrast on the yellow
-    hi_row_style  = "background:#ffd36b;"
-    hi_cell_style = "text-align:center; color:#111; font-weight:700;"
-
-    if row.get("Trigger?") == "Yes":
-        row_style = hi_row_style
-        cell_style = hi_cell_style
+    if gap_df.empty:
+        st.info("No cycle data yet.")
     else:
-        row_style = ""
-        cell_style = base_cell
+        gap_df["__sort_key"] = gap_df["Overdue %"].fillna(-1)
+        gap_df = gap_df.sort_values(["__sort_key", "Current Gap"], ascending=[False, False]).drop(columns="__sort_key")
 
-    return (
-        f"<tr style='{row_style}'>"
-        f"<td style='{cell_style}'>{row['Fireball']}</td>"
-        f"<td style='{cell_style}'>{'' if pd.isna(row['Avg Gap']) else row['Avg Gap']}</td>"
-        f"<td style='{cell_style}'>{row['Current Gap']}</td>"
-        f"<td style='{cell_style}'>{'' if pd.isna(row['Overdue %']) else int(row['Overdue %'])}%</td>"
-        f"<td style='{cell_style}'>{'' if pd.isna(row['Hazard@Gap']) else row['Hazard@Gap']}</td>"
-        f"<td style='{cell_style}'>{'' if pd.isna(row['Hazard Thr(75%)']) else row['Hazard Thr(75%)']}</td>"
-        f"<td style='{cell_style}'>{row['Trigger?']}</td>"
-        "</tr>"
-    )
+        # --- Build highlighted HTML table ---
+        def row_html(row):
+            # default (non-highlighted): white text (works on dark theme)
+            base_cell = "text-align:center; color:#fff;"
+            # highlighted rows: darker text on stronger yellow background
+            hi_row_style  = "background:#ffd36b;"   # darker yellow
+            hi_cell_style = "text-align:center; color:#111; font-weight:700;"
 
-    header_html = (
-        "<table style='width:100%; border-collapse:collapse; font-size:16px;'>"
-        "<thead><tr>"
-        "<th style='color:#fff;'>Fireball</th>"
-        "<th style='color:#fff;'>Avg Gap</th>"
-        "<th style='color:#fff;'>Current Gap</th>"
-        "<th style='color:#fff;'>Overdue %</th>"
-        "<th style='color:#fff;'>Hazard@Gap</th>"
-        "<th style='color:#fff;'>Hazard Thr(75%)</th>"
-        "<th style='color:#fff;'>Trigger?</th>"
-        "</tr></thead><tbody>"
-    )
-    body_html = "".join(row_html(r) for _, r in gap_df.iterrows())
-    table_html = header_html + body_html + "</tbody></table>"
-    st.markdown(table_html, unsafe_allow_html=True)
+            if row.get("Trigger?") == "Yes":
+                row_style = hi_row_style
+                cell_style = hi_cell_style
+            else:
+                row_style = ""
+                cell_style = base_cell
 
-    # Optional chart (kept; follows the sorted data)
-    fig_gap_compare = px.bar(
-        gap_df,
-        x="Fireball", y=["Avg Gap", "Current Gap"],
-        barmode="group",
-        title="Average vs Current Gaps by Fireball"
-    )
-    fig_gap_compare.update_layout(
-        xaxis=dict(
-            tickmode="array",
-            tickvals=DIGITS,
-            ticktext=DIGITS,
-            fixedrange=True
-        ),
-        yaxis=dict(fixedrange=True)
-    )
-    st.plotly_chart(
-        fig_gap_compare,
-        use_container_width=True,
-        config={"displayModeBar": False, "scrollZoom": False}
-    )
+            return (
+                f"<tr style='{row_style}'>"
+                f"<td style='{cell_style}'>{row['Fireball']}</td>"
+                f"<td style='{cell_style}'>{'' if pd.isna(row['Avg Gap']) else row['Avg Gap']}</td>"
+                f"<td style='{cell_style}'>{row['Current Gap']}</td>"
+                f"<td style='{cell_style}'>{'' if pd.isna(row['Overdue %']) else int(row['Overdue %'])}%</td>"
+                f"<td style='{cell_style}'>{'' if pd.isna(row['Hazard@Gap']) else row['Hazard@Gap']}</td>"
+                f"<td style='{cell_style}'>{'' if pd.isna(row['Hazard Thr(75%)']) else row['Hazard Thr(75%)']}</td>"
+                f"<td style='{cell_style}'>{row['Trigger?']}</td>"
+                "</tr>"
+            )
+
+        header_html = (
+            "<table style='width:100%; border-collapse:collapse; font-size:16px;'>"
+            "<thead><tr>"
+            "<th style='color:#fff; text-align:center;'>Fireball</th>"
+            "<th style='color:#fff; text-align:center;'>Avg Gap</th>"
+            "<th style='color:#fff; text-align:center;'>Current Gap</th>"
+            "<th style='color:#fff; text-align:center;'>Overdue %</th>"
+            "<th style='color:#fff; text-align:center;'>Hazard@Gap</th>"
+            "<th style='color:#fff; text-align:center;'>Hazard Thr(75%)</th>"
+            "<th style='color:#fff; text-align:center;'>Trigger?</th>"
+            "</tr></thead><tbody>"
+        )
+        try:
+            body_html = "".join(row_html(r) for _, r in gap_df.iterrows())
+            table_html = header_html + body_html + "</tbody></table>"
+            st.markdown(table_html, unsafe_allow_html=True)
+            st.caption(f"{len(gap_df)} rows")  # tiny debug helper; remove if you like
+        except Exception as e:
+            st.error(f"Failed to render table: {e}")
+
+        # --- Chart (unchanged) ---
+        fig_gap_compare = px.bar(
+            gap_df,
+            x="Fireball", y=["Avg Gap", "Current Gap"],
+            barmode="group",
+            title="Average vs Current Gaps by Fireball"
+        )
+        fig_gap_compare.update_layout(
+            xaxis=dict(tickmode="array", tickvals=DIGITS, ticktext=DIGITS, fixedrange=True),
+            yaxis=dict(fixedrange=True)
+        )
+        st.plotly_chart(
+            fig_gap_compare,
+            use_container_width=True,
+            config={"displayModeBar": False, "scrollZoom": False}
+        )
+
 
 # ======================================================================
 #                           HEATMAP
@@ -679,5 +681,6 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
 
 
