@@ -42,17 +42,17 @@ rec_sheet  = client.open("fireball_recommendations").sheet1
 MODEL_VERSION = "v1.1"
 
 def open_log_sheet(client):
+    """
+    Use the 'model_logs' worksheet inside 'fireball_recommendations'.
+    Assumes it already exists and has the correct headers.
+    """
     try:
-        return client.open("fireball_model_logs").sheet1
-    except gspread.SpreadsheetNotFound:
-        sh = client.create("fireball_model_logs")
-        ws = sh.sheet1
-        ws.update('A1', [["ts_logged","date","draw","model_version",
-                          "tau_days","alpha","uplift_clip","sim_penalty",
-                          "top_pick3","top_fireball","top_conf","slate_json",
-                          "realized_pick3","realized_fireball","hit_top",
-                          "slate_hits","brier_top","logloss_top"]])
+        host_ss = client.open("fireball_recommendations")
+        ws = host_ss.worksheet("model_logs")
         return ws
+    except Exception as e:
+        st.warning(f"Could not open model_logs worksheet: {e}")
+        return None
 
 ws_logs = open_log_sheet(client)
 
@@ -974,3 +974,4 @@ try:
         backfill_outcomes_and_scores(ws_logs, df)
 except Exception as e:
     st.warning(f"Outcome backfill error: {e}")
+
