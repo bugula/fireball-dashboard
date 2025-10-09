@@ -448,6 +448,65 @@ def render_health_strip(hit14, baseline=10.0, last_date=None, logloss60=None):
         f"</div>"
     )
 
+
+# --------- Safe, idempotent logging helper (logs once per date+draw) ---------
+def log_model_once(ws_logs, key_date, key_draw, *, model_version, tau_days, alpha,
+                   uplift_clip, sim_penalty, top_combo, fire_rec, top_conf, norm_list):
+    """
+    Append one row to model_logs exactly once per (date, draw).
+    Uses both a sheet lookup and an in-session cache to suppress duplicates.
+    """
+    if ws_logs is None:
+        return
+
+    key_date = str(key_date).strip()
+    key_draw = str(key_draw).strip().title()
+    dedupe_key = f"{key_date}|{key_draw}"
+
+    # per-session guard
+    if "logged_keys" not in st.session_state:
+        st.session_state.logged_keys = set()
+    if dedupe_key in st.session_state.logged_keys:
+        return
+
+    # sheet-level guard
+    try:
+        rows = ws_logs.get_all_records()
+        for r in rows:
+            r_date = str(r.get("date", "")).strip()
+            r_draw = str(r.get("draw", "")).strip().title()
+            if r_date == key_date and r_draw == key_draw:
+                st.session_state.logged_keys.add(dedupe_key)
+                return
+    except Exception:
+        # If the read fails for some reason, fail-closed (don't write)
+        return
+
+    # write one row
+    try:
+        ws_logs.append_row([
+            datetime.now(pytz.timezone("America/Chicago")).isoformat(),  # ts_logged
+            key_date,                                                    # date
+            key_draw,                                                    # draw
+            model_version,                                               # model_version
+            tau_days,                                                    # tau_days
+            alpha,                                                       # alpha
+            uplift_clip,                                                 # uplift_clip
+            sim_penalty,                                                 # sim_penalty
+            top_combo,                                                   # top_pick3
+            fire_rec,                                                    # top_fireball
+            round(float(top_conf), 6),                                   # top_conf
+            json.dumps(norm_list),                                       # slate_json (we'll store the Norm list)
+            "", "",                                                      # realized_pick3, realized_fireball
+            "", "",                                                      # hit_top, slate_hits
+            "", ""                                                       # brier_top, logloss_top
+        ])
+        st.session_state.logged_keys.add(dedupe_key)
+    except Exception:
+        # swallow write errors (don’t risk cascading UI errors)
+        pass
+
+
 # ======================================================================
 #                           RECOMMENDATION ENGINE
 # ======================================================================
@@ -622,29 +681,21 @@ else:
             pass
 
         # ----- log once per (date, draw) to original rec sheet -----
-        # --- log once per (date, draw) ---
-        if ws_logs is not None:
-            existing_logs = ws_logs.get_all_records()
-            already_logged = any(
-                str(r.get("date")) == rec_date_str and (r.get("draw") or "").strip().title() == draw_type_for_rec
-                for r in existing_logs
-            )
-            if not already_logged:
-                ws_logs.append_row([
-                    datetime.now(pytz.timezone("America/Chicago")).isoformat(),
-                    rec_date_str,
-                    draw_type_for_rec,
-                    "v1.0",   # model version
-                    28,        # tau_days
-                    1.0,       # alpha
-                    "0.5–1.5", # uplift_clip
-                    0.15,      # sim_penalty
-                    top_combo,
-                    fire_rec,
-                    round(top_combo_score, 4),
-                    json.dumps(norm),
-                    "", "", "", "", "", "", ""
-                ])
+
+        log_model_once(
+            ws_logs,
+            rec_date_str,
+            draw_type_for_rec,
+            model_version="v1.0",
+            tau_days=28,
+            alpha=1.0,
+            uplift_clip="0.5–1.5",
+            sim_penalty=0.15,
+            top_combo=top_combo,
+            fire_rec=fire_rec,
+            top_conf=top_combo_score,
+            norm_list=norm,  # the normalized top-K list we just computed for the slate
+        )
 
 
         # ----- also log to model logs (with slate + confidence) -----
@@ -997,5 +1048,6 @@ try:
         backfill_outcomes_and_scores(ws_logs, df)
 except Exception as e:
     st.warning(f"Outcome backfill error: {e}")
+
 
 
