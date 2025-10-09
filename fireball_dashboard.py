@@ -186,6 +186,147 @@ def compute_display_alternates(df_all, rec_date, draw_type_for_rec, top_per_slot
     return [(c, s/total) for c, s in combos]
 
 # ======================================================================
+#        NEW: joint modeling + diversified 4-ticket slate helpers
+# ======================================================================
+
+def fireball_digit_uplift(df_all, fireball, slot_col):
+    """
+    Small co-occurrence uplift for digits in a slot given a specific fireball.
+    Returns Series over digits (0-9) centered around 1.0 (e.g., 0.9..1.1).
+    """
+    domain = [str(i) for i in range(10)]
+    sub = df_all[df_all["fireball"].astype(str) == str(fireball)]
+    if sub.empty:
+        return pd.Series(1.0, index=domain)
+    freq = sub[slot_col].astype(str).value_counts(normalize=True).reindex(domain, fill_value=0)
+    uplift = (freq / 0.1).clip(0.75, 1.25)  # center on 1.0, guardrails
+    return uplift
+
+def build_joint_candidates(df_all, rec_date, draw_type, top_per_slot=3, top_fireballs=3):
+    """
+    Build a scored list of (pick3, fireball, score) candidates using:
+      - decayed + conditional-uplifted probs for slots and fireball
+      - gentle fireball<->slot co-occurrence uplift
+    """
+    if df_all.empty:
+        return []
+
+    rec_weekday = pd.to_datetime(rec_date).dt.day_name() if hasattr(rec_date, "dt") else pd.to_datetime(rec_date).day_name()
+    chron_all = df_all.sort_values(["date","draw_sort"]).reset_index(drop=True)
+
+    # Base probs
+    pF_base = decayed_probs(chron_all["date"], chron_all["fireball"], tau_days=28, alpha=1.0)
+    pF = conditional_uplift(chron_all, "fireball", pF_base, draw_type=draw_type, weekday=rec_weekday)
+
+    p1 = decayed_probs(chron_all["date"], chron_all["num1"], tau_days=28, alpha=1.0)
+    p2 = decayed_probs(chron_all["date"], chron_all["num2"], tau_days=28, alpha=1.0)
+    p3 = decayed_probs(chron_all["date"], chron_all["num3"], tau_days=28, alpha=1.0)
+
+    p1 = conditional_uplift(chron_all, "num1", p1, draw_type=draw_type, weekday=rec_weekday)
+    p2 = conditional_uplift(chron_all, "num2", p2, draw_type=draw_type, weekday=rec_weekday)
+    p3 = conditional_uplift(chron_all, "num3", p3, draw_type=draw_type, weekday=rec_weekday)
+
+    # Top indices per slot and fireball
+    idx1 = p1.sort_values(ascending=False).index[:top_per_slot]
+    idx2 = p2.sort_values(ascending=False).index[:top_per_slot]
+    idx3 = p3.sort_values(ascending=False).index[:top_per_slot]
+    topF = pF.sort_values(ascending=False).index[:top_fireballs]
+
+    # Precompute co-occurrence uplift per fireball & slot
+    uplift_1 = {fb: fireball_digit_uplift(chron_all, fb, "num1") for fb in topF}
+    uplift_2 = {fb: fireball_digit_uplift(chron_all, fb, "num2") for fb in topF}
+    uplift_3 = {fb: fireball_digit_uplift(chron_all, fb, "num3") for fb in topF}
+
+    candidates = []
+    for fb in topF:
+        for a in idx1:
+            for b in idx2:
+                for c in idx3:
+                    base = float(pF[fb] * p1[a] * p2[b] * p3[c])
+                    co = float(uplift_1[fb][a] * uplift_2[fb][b] * uplift_3[fb][c])
+                    score = base * co
+                    candidates.append(("".join([a,b,c]), str(fb), score))
+    candidates.sort(key=lambda x: x[2], reverse=True)
+    return candidates
+
+def combo_similarity(pickA, pickB):
+    """
+    Simple similarity: +2 if same last digit, +1 if same digit sum bucket, very high if exact match.
+    Lower is better (we'll penalize high similarity).
+    """
+    if pickA == pickB:
+        return 999  # hard avoid exact duplicates
+    score = 0
+    if pickA[-1] == pickB[-1]:
+        score += 2
+    sumA = sum(int(d) for d in pickA)
+    sumB = sum(int(d) for d in pickB)
+    if (sumA % 3) == (sumB % 3):
+        score += 1
+    return score
+
+def select_diverse_slate(candidates, k=4, max_per_fireball=2, sim_penalty=0.15):
+    """
+    Greedy: pick top-scoring while penalizing candidates too similar to the slate
+    and limiting duplicates per fireball.
+    """
+    slate = []
+    count_by_fb = {}
+    for pick, fb, raw_score in candidates:
+        if len(slate) >= k:
+            break
+        if count_by_fb.get(fb, 0) >= max_per_fireball:
+            continue
+        penalty = 0.0
+        for s_pick, s_fb, s_score in slate:
+            penalty += combo_similarity(pick, s_pick) * sim_penalty
+            if fb == s_fb:
+                penalty += 0.1
+        adj = raw_score * max(0.0, (1.0 - penalty))
+        if adj <= 0:
+            continue
+        slate.append((pick, fb, adj))
+        count_by_fb[fb] = count_by_fb.get(fb, 0) + 1
+
+    if len(slate) < k:
+        used = set((p, f) for p, f, _ in slate)
+        for pick, fb, s in candidates:
+            if len(slate) >= k:
+                break
+            if (pick, fb) in used:
+                continue
+            if count_by_fb.get(fb, 0) >= max_per_fireball:
+                continue
+            slate.append((pick, fb, s))
+            count_by_fb[fb] = count_by_fb.get(fb, 0) + 1
+    return slate[:k]
+
+def render_four_ticket_slate(slate):
+    if not slate:
+        return
+    total = sum(max(s, 0.0) for _, _, s in slate) or 1.0
+    norm = [(p, f, s/total) for p, f, s in slate]
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.subheader("🎯 Play Slate (4 tickets)")
+
+    rows = []
+    for pick, fb, w in norm:
+        pc = f"{w*100:.0f}%"
+        pick_html = "".join(style_number(d) for d in pick)
+        fb_html   = style_number(fb, fireball=True)
+        bar = f"<div style='height:6px; width:{max(6,int(w*100))}%; background:#3fb950; border-radius:4px;'></div>"
+        rows.append(
+            f"<div style='display:flex; align-items:center; justify-content:space-between; gap:16px; "
+            f"background:#1f1c24; border:1px solid #2a2630; padding:10px 12px; border-radius:10px; margin:6px 0;'>"
+            f"<div style='font-weight:700; color:#fff;'>{pick_html} + {fb_html}</div>"
+            f"<div style='min-width:90px; text-align:right; color:#9fb5ff; font-weight:600;'>{pc}</div>"
+            f"</div>"
+            f"{bar}"
+        )
+    st.markdown("<div style='display:flex; flex-direction:column; gap:8px;'>" + "".join(rows) + "</div>", unsafe_allow_html=True)
+
+# ======================================================================
 #                           RECOMMENDATION ENGINE
 # ======================================================================
 
@@ -261,10 +402,10 @@ if existing_rec:
     )
 
     # --- ALWAYS show alternates (display-only recompute) ---
-    norm = compute_display_alternates(df, rec_date, draw_type_for_rec, top_per_slot=3, k=5)
-    if len(norm) > 1:
+    norm_alt = compute_display_alternates(df, rec_date, draw_type_for_rec, top_per_slot=3, k=5)
+    if len(norm_alt) > 1:
         chips = []
-        for combo, s in norm[:3]:
+        for combo, s in norm_alt[:3]:
             pct = f"{s*100:.0f}%"
             chip = (
                 f"<span style='display:inline-flex; align-items:center; gap:6px; "
@@ -276,6 +417,14 @@ if existing_rec:
             )
             chips.append(chip)
         st.markdown("<div style='text-align:center; margin-top:6px;'>Alternates: " + " ".join(chips) + "</div>", unsafe_allow_html=True)
+
+    # ---- 4-ticket slate from same model ----
+    try:
+        candidates = build_joint_candidates(df, rec_date, draw_type_for_rec, top_per_slot=3, top_fireballs=3)
+        slate = select_diverse_slate(candidates, k=4, max_per_fireball=2, sim_penalty=0.15)
+        render_four_ticket_slate(slate)
+    except Exception as e:
+        st.warning(f"Could not compute 4-ticket slate: {e}")
 
 else:
     # ----- compute a new recommendation (UPGRADED) -----
@@ -340,11 +489,19 @@ else:
                     f"<span style='font-weight:600; color:#0b4a8b;'> {pct}</span>"
                     f"</span>"
                 )
-                chips.append(chip)
-            st.markdown("<div style='text-align:center; margin-top:6px;'>Alternates: " + " ".join(chips) + "</div>", unsafe_allow_html=True)
+            chips_html = "<div style='text-align:center; margin-top:6px;'>Alternates: " + " ".join(chips) + "</div>"
+            st.markdown(chips_html, unsafe_allow_html=True)
 
         # ----- log once per (date, draw) -----
         rec_sheet.append_row([rec_date_str, draw_type_for_rec, top_combo, fire_rec])
+
+        # ---- 4-ticket slate from same model ----
+        try:
+            candidates = build_joint_candidates(df, rec_date, draw_type_for_rec, top_per_slot=3, top_fireballs=3)
+            slate = select_diverse_slate(candidates, k=4, max_per_fireball=2, sim_penalty=0.15)
+            render_four_ticket_slate(slate)
+        except Exception as e:
+            st.warning(f"Could not compute 4-ticket slate: {e}")
 
 # ======================================================================
 #                   TOP 2 OVERDUE NOW (chips under banner)
@@ -558,7 +715,6 @@ if not df.empty:
             config={"displayModeBar": False, "scrollZoom": False}
         )
 
-
 # ======================================================================
 #                           HEATMAP
 # ======================================================================
@@ -680,7 +836,3 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
-
-
-
-
