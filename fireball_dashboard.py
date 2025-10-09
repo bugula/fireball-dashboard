@@ -622,7 +622,30 @@ else:
             pass
 
         # ----- log once per (date, draw) to original rec sheet -----
-        rec_sheet.append_row([rec_date_str, draw_type_for_rec, top_combo, fire_rec])
+        # --- log once per (date, draw) ---
+        if ws_logs is not None:
+            existing_logs = ws_logs.get_all_records()
+            already_logged = any(
+                str(r.get("date")) == rec_date_str and (r.get("draw") or "").strip().title() == draw_type_for_rec
+                for r in existing_logs
+            )
+            if not already_logged:
+                ws_logs.append_row([
+                    datetime.now(pytz.timezone("America/Chicago")).isoformat(),
+                    rec_date_str,
+                    draw_type_for_rec,
+                    "v1.0",   # model version
+                    28,        # tau_days
+                    1.0,       # alpha
+                    "0.5–1.5", # uplift_clip
+                    0.15,      # sim_penalty
+                    top_combo,
+                    fire_rec,
+                    round(top_combo_score, 4),
+                    json.dumps(norm),
+                    "", "", "", "", "", "", ""
+                ])
+
 
         # ----- also log to model logs (with slate + confidence) -----
         try:
@@ -974,4 +997,5 @@ try:
         backfill_outcomes_and_scores(ws_logs, df)
 except Exception as e:
     st.warning(f"Outcome backfill error: {e}")
+
 
