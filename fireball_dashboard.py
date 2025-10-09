@@ -162,29 +162,6 @@ def overdue_trigger(current_gap, hazard):
     thr = float(np.percentile(list(hazard.values()), 75))
     return (h >= thr), h, thr
 
-# ---------- helper to ALWAYS produce alternates for display ----------
-def compute_display_alternates(df_all, rec_date, draw_type_for_rec, top_per_slot=3, k=5):
-    """Recompute combos for display-only (used even when a rec already exists)."""
-    if df_all.empty:
-        return []
-
-    rec_weekday = weekday_name(rec_date)
-    chron_all = df_all.sort_values(["date", "draw_sort"]).reset_index(drop=True)
-
-    # slot-wise base probs
-    p1 = decayed_probs(chron_all["date"], chron_all["num1"], tau_days=28, alpha=1.0, domain=DIGITS)
-    p2 = decayed_probs(chron_all["date"], chron_all["num2"], tau_days=28, alpha=1.0, domain=DIGITS)
-    p3 = decayed_probs(chron_all["date"], chron_all["num3"], tau_days=28, alpha=1.0, domain=DIGITS)
-
-    # context uplift
-    p1 = conditional_uplift(chron_all, "num1", p1, draw_type=draw_type_for_rec, weekday=rec_weekday)
-    p2 = conditional_uplift(chron_all, "num2", p2, draw_type=draw_type_for_rec, weekday=rec_weekday)
-    p3 = conditional_uplift(chron_all, "num3", p3, draw_type=draw_type_for_rec, weekday=rec_weekday)
-
-    combos = top_k_combos(p1, p2, p3, top_per_slot=top_per_slot, k=k)
-    total = sum(s for _, s in combos) or 1.0
-    return [(c, s/total) for c, s in combos]
-
 # ======================================================================
 #        NEW: joint modeling + diversified 4-ticket slate helpers
 # ======================================================================
@@ -400,23 +377,6 @@ if existing_rec:
         f"</div>",
         unsafe_allow_html=True
     )
-
-    # --- ALWAYS show alternates (display-only recompute) ---
-    norm_alt = compute_display_alternates(df, rec_date, draw_type_for_rec, top_per_slot=3, k=5)
-    if len(norm_alt) > 1:
-        chips = []
-        for combo, s in norm_alt[:3]:
-            pct = f"{s*100:.0f}%"
-            chip = (
-                f"<span style='display:inline-flex; align-items:center; gap:6px; "
-                f"background:#e8f3ff; border:1px solid #bcdcff; border-radius:999px; "
-                f"padding:4px 10px; margin:4px;'>"
-                f"{''.join(style_number(n) for n in combo)}"
-                f"<span style='font-weight:600; color:#0b4a8b;'> {pct}</span>"
-                f"</span>"
-            )
-            chips.append(chip)
-        st.markdown("<div style='text-align:center; margin-top:6px;'>Alternates: " + " ".join(chips) + "</div>", unsafe_allow_html=True)
 
     # ---- 4-ticket slate from same model ----
     try:
@@ -836,3 +796,4 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
