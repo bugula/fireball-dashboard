@@ -303,6 +303,75 @@ def render_four_ticket_slate(slate):
         )
     st.markdown("<div style='display:flex; flex-direction:column; gap:8px;'>" + "".join(rows) + "</div>", unsafe_allow_html=True)
 
+
+# ---------- Play Slate helpers (confidence bars) ----------
+def compute_display_slate(df_all, rec_date, draw_type_for_rec, top_per_slot=3, k=6):
+    """Return [(combo_str, normalized_score_float), ...] ordered by strength desc."""
+    if df_all.empty:
+        return []
+    rec_weekday = weekday_name(rec_date)
+    chron_all = df_all.sort_values(["date", "draw_sort"]).reset_index(drop=True)
+
+    # Base slot probabilities (decayed + Dirichlet)
+    p1 = decayed_probs(chron_all["date"], chron_all["num1"], tau_days=28, alpha=1.0, domain=DIGITS)
+    p2 = decayed_probs(chron_all["date"], chron_all["num2"], tau_days=28, alpha=1.0, domain=DIGITS)
+    p3 = decayed_probs(chron_all["date"], chron_all["num3"], tau_days=28, alpha=1.0, domain=DIGITS)
+
+    # Context uplift (weekday + draw type)
+    p1 = conditional_uplift(chron_all, "num1", p1, draw_type=draw_type_for_rec, weekday=rec_weekday)
+    p2 = conditional_uplift(chron_all, "num2", p2, draw_type=draw_type_for_rec, weekday=rec_weekday)
+    p3 = conditional_uplift(chron_all, "num3", p3, draw_type=draw_type_for_rec, weekday=rec_weekday)
+
+    combos = top_k_combos(p1, p2, p3, top_per_slot=top_per_slot, k=k)
+    total = sum(s for _, s in combos) or 1.0
+    return [(c, s/total) for c, s in combos]
+
+
+def _conf_bar_html(p: float) -> str:
+    """p in [0,1] → horizontal confidence bar."""
+    pct = max(0.0, min(1.0, float(p))) * 100.0
+    return (
+        "<div style='width:100%; height:10px; background:#2a2a2a; border-radius:999px;'>"
+        f"  <div style='width:{pct:.0f}%; height:10px; background:#4aa3ff; border-radius:999px;'></div>"
+        "</div>"
+    )
+
+def _combo_bubbles_html(combo: str) -> str:
+    return "".join(style_number(ch) for ch in combo)
+
+def render_play_slate(norm_list) -> str:
+    """norm_list = [(combo, normalized_score), ...]"""
+    if not norm_list:
+        return ""
+    rows = []
+    for idx, (combo, score) in enumerate(norm_list, 1):
+        rows.append(
+            "<tr>"
+            f"  <td style='text-align:center; padding:6px 8px; color:#bbb;'>{idx}</td>"
+            f"  <td style='text-align:center; padding:6px 8px;'>{_combo_bubbles_html(combo)}</td>"
+            f"  <td style='width:40%; padding:6px 8px;'>{_conf_bar_html(score)}</td>"
+            f"  <td style='text-align:right; padding:6px 8px; color:#bbb;'>{score*100:.0f}%</td>"
+            "</tr>"
+        )
+    table = (
+        "<div style='background:#1b1820; border:1px solid #2e2a34; border-radius:12px; padding:12px; margin-top:10px;'>"
+        "<div style='font-weight:700; font-size:16px; color:#fff; margin-bottom:6px;'>🎯 Play Slate</div>"
+        "<table style='width:100%; border-collapse:collapse;'>"
+        "  <thead>"
+        "    <tr>"
+        "      <th style='text-align:center; color:#aaa; font-weight:600;'>#</th>"
+        "      <th style='text-align:center; color:#aaa; font-weight:600;'>Combo</th>"
+        "      <th style='text-align:left;   color:#aaa; font-weight:600;'>Confidence</th>"
+        "      <th style='text-align:right;  color:#aaa; font-weight:600;'>Share</th>"
+        "    </tr>"
+        "  </thead>"
+        f"  <tbody>{''.join(rows)}</tbody>"
+        "</table>"
+        "</div>"
+    )
+    return table
+
+
 # ======================================================================
 #                           RECOMMENDATION ENGINE
 # ======================================================================
@@ -378,13 +447,13 @@ if existing_rec:
         unsafe_allow_html=True
     )
 
-    # ---- 4-ticket slate from same model ----
+    # --- Play Slate (confidence bars; display-only recompute) ---
     try:
-        candidates = build_joint_candidates(df, rec_date, draw_type_for_rec, top_per_slot=3, top_fireballs=3)
-        slate = select_diverse_slate(candidates, k=4, max_per_fireball=2, sim_penalty=0.15)
-        render_four_ticket_slate(slate)
+        norm = compute_display_slate(df, rec_date, draw_type_for_rec, top_per_slot=3, k=6)
+        if norm:
+            st.markdown(render_play_slate(norm), unsafe_allow_html=True)
     except Exception as e:
-        st.warning(f"Could not compute 4-ticket slate: {e}")
+        st.warning(f"Could not compute play slate: {e}")
 
 else:
     # ----- compute a new recommendation (UPGRADED) -----
@@ -436,32 +505,15 @@ else:
             unsafe_allow_html=True
         )
 
-        # Small list of alternates (now guaranteed to show)
-        if len(norm) > 1:
-            chips = []
-            for combo, s in norm[:3]:
-                pct = f"{s*100:.0f}%"
-                chip = (
-                    f"<span style='display:inline-flex; align-items:center; gap:6px; "
-                    f"background:#e8f3ff; border:1px solid #bcdcff; border-radius:999px; "
-                    f"padding:4px 10px; margin:4px;'>"
-                    f"{''.join(style_number(n) for n in combo)}"
-                    f"<span style='font-weight:600; color:#0b4a8b;'> {pct}</span>"
-                    f"</span>"
-                )
-            chips_html = "<div style='text-align:center; margin-top:6px;'>Alternates: " + " ".join(chips) + "</div>"
-            st.markdown(chips_html, unsafe_allow_html=True)
+        # --- Play Slate (confidence bars; uses the same 'norm' we just computed) ---
+        try:
+            if norm:
+                st.markdown(render_play_slate(norm), unsafe_allow_html=True)
+        except Exception as e:
+            st.warning(f"Could not compute play slate: {e}")
 
         # ----- log once per (date, draw) -----
         rec_sheet.append_row([rec_date_str, draw_type_for_rec, top_combo, fire_rec])
-
-        # ---- 4-ticket slate from same model ----
-        try:
-            candidates = build_joint_candidates(df, rec_date, draw_type_for_rec, top_per_slot=3, top_fireballs=3)
-            slate = select_diverse_slate(candidates, k=4, max_per_fireball=2, sim_penalty=0.15)
-            render_four_ticket_slate(slate)
-        except Exception as e:
-            st.warning(f"Could not compute 4-ticket slate: {e}")
 
 # ======================================================================
 #                   TOP 2 OVERDUE NOW (chips under banner)
@@ -796,4 +848,5 @@ if not rec_df.empty and not df.empty:
         st.info("No completed recommendations to calculate all-time accuracy yet.")
 else:
     st.info("Not enough data to display all-time accuracy.")
+
 
