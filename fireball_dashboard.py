@@ -24,8 +24,62 @@ def style_number(num, fireball=False):
                 f"text-align:center; line-height:35px; font-weight:bold; "
                 f"margin:2px; border:1px solid black;'>{num}</span>")
 
+# ---------- global page setup ----------
 st.set_page_config(page_title="Fireball Dashboard", layout="wide")
 st.title("Fireball Dashboard")
+
+# ---------- global CSS (cards + bigger tabs) ----------
+st.markdown("""
+<style>
+/* Reusable card style (matching Play Slate vibe) */
+.fb-card {
+  background:#1b1820;
+  border:1px solid #2e2a34;
+  border-radius:12px;
+  padding:12px;
+  margin-top:10px;
+}
+.fb-card .fb-card-title {
+  font-weight:700;
+  font-size:16px;
+  color:#fff;
+  margin-bottom:6px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+
+/* Bigger, clearer tabs */
+.stTabs [role="tablist"] {
+  gap: 10px;
+  border-bottom: 1px solid #2a2630;
+  margin-top: 8px;
+}
+.stTabs [role="tab"] {
+  padding: 10px 18px !important;
+  border-radius: 10px 10px 0 0 !important;
+  background: #1f1c24 !important;
+  color: #e6e6e6 !important;
+  font-weight: 700 !important;
+  font-size: 1rem !important;
+  border: 1px solid #2a2630 !important;
+  border-bottom: none !important;
+  opacity: 1 !important;
+}
+.stTabs [role="tab"][aria-selected="true"] {
+  background: #2a263a !important;
+  color: #ffffff !important;
+  border-color: #3a3444 !important;
+  border-bottom: none !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+def card_open(title_text: str):
+    st.markdown(f"<div class='fb-card'><div class='fb-card-title'>{title_text}</div>", unsafe_allow_html=True)
+
+def card_close():
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------- Google Sheets setup ----------
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -419,8 +473,8 @@ def render_play_slate(norm_list) -> str:
             "</tr>"
         )
     table = (
-        "<div style='background:#1b1820; border:1px solid #2e2a34; border-radius:12px; padding:12px; margin-top:10px;'>"
-        "<div style='font-weight:700; font-size:16px; color:#fff; margin-bottom:6px;'>🎯 Play Slate</div>"
+        "<div class='fb-card'>"
+        "<div class='fb-card-title'>🎯 Play Slate</div>"
         "<table style='width:100%; border-collapse:collapse;'>"
         "  <thead>"
         "    <tr>"
@@ -532,6 +586,7 @@ else:
     draw_type_for_rec = "Midday"
 
 st.markdown("<br>", unsafe_allow_html=True)
+# Recommendation banner (kept as-is)
 st.subheader(f"🔥 Recommended for {draw_type_for_rec} ({rec_date})")
 
 # 2) Show the logged recommendation if it exists; otherwise compute + log + show
@@ -570,12 +625,15 @@ if existing_rec:
     pick3_html = "".join([style_number(n) for n in digits])
     fireball_html = style_number(fire_rec, fireball=True)
 
+    # Banner card
+    card_open("Recommendation")
     st.markdown(
         f"<div style='background-color:#1f1c24; padding:15px; border-radius:10px; text-align:center;'>"
         f"<div style='font-size:20px; font-weight:bold; color:white;'>{pick3_html} + {fireball_html}</div>"
         f"</div>",
         unsafe_allow_html=True
     )
+    card_close()
 
     # --- Play Slate (confidence bars; display-only recompute) ---
     norm = []
@@ -599,7 +657,10 @@ if existing_rec:
         else:
             hit14 = None
         last_draw_date = df["date"].max() if not df.empty else None
+
+        card_open("Engine Health")
         st.markdown(render_health_strip(hit14, last_date=last_draw_date), unsafe_allow_html=True)
+        card_close()
     except Exception:
         pass
 
@@ -639,7 +700,8 @@ else:
         top_combo, top_combo_score = norm[0]
         fire_rec = fire_probs.sort_values(ascending=False).index[0]
 
-        # Banner
+        # Recommendation card
+        card_open("Recommendation")
         pick3_html    = "".join([style_number(n) for n in list(top_combo)])
         fireball_html = style_number(fire_rec, fireball=True)
         st.markdown(
@@ -648,6 +710,7 @@ else:
             f"</div>",
             unsafe_allow_html=True
         )
+        card_close()
 
         # --- Play Slate (confidence bars; uses the same 'norm') ---
         try:
@@ -669,7 +732,10 @@ else:
             else:
                 hit14 = None
             last_draw_date = df["date"].max() if not df.empty else None
+
+            card_open("Engine Health")
             st.markdown(render_health_strip(hit14, last_date=last_draw_date), unsafe_allow_html=True)
+            card_close()
         except Exception:
             pass
 
@@ -690,7 +756,7 @@ else:
         )
 
 # ======================================================================
-# Tabs to reduce clutter
+# Tabs to reduce clutter (now styled larger)
 # ======================================================================
 t_trends, t_gaps, t_diag = st.tabs(["Trends", "Gaps & Overdue", "Diagnostics"])
 
@@ -718,6 +784,7 @@ with t_gaps:
         top2 = [t for t in sorted(results_for_rank, key=lambda x: x[3], reverse=True) if t[2] is not None][:2]
 
         if top2:
+            card_open("Overdue Now (Top 2)")
             chips = []
             for digit, cur_gap, avg_gap, ratio in top2:
                 pct = f"{ratio*100:.0f}%"
@@ -730,17 +797,16 @@ with t_gaps:
                     f"</span>"
                 )
                 chips.append(chip)
-            chips_html = "<div style='text-align:center; margin-top:6px;'>Overdue now: " + " ".join(chips) + "</div>"
+            chips_html = "<div style='text-align:center; margin-top:6px;'>" + " ".join(chips) + "</div>"
             st.markdown(chips_html, unsafe_allow_html=True)
+            card_close()
 
 # ======================================================================
 #                           LAST 14 DRAWS (styled) -> Trends
 # ======================================================================
 with t_trends:
     if not df.empty:
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.subheader("🕒 Last 14 Draws")
-
+        card_open("🕒 Last 14 Draws")
         last14 = df.sort_values(["date", "draw_sort"], ascending=[False, False]).head(14)
 
         styled_last14 = last14.copy()
@@ -762,31 +828,32 @@ with t_trends:
             "<th>", "<th style='text-align:center; vertical-align:middle;'>"
         )
         st.markdown(last14_html, unsafe_allow_html=True)
+        card_close()
 
 # ======================================================================
 #                       FIREBALL FREQUENCY (last 14) -> Trends
 # ======================================================================
 with t_trends:
     if not df.empty:
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.subheader("📊 Fireball Frequency")
+        card_open("📊 Fireball Frequency (Last 14)")
         freq14 = (df.sort_values(["date", "draw_sort"], ascending=[False, False])
                     .head(14)["fireball"]
                     .value_counts()
                     .reindex(DIGITS, fill_value=0)
                     .reset_index())
         freq14.columns = ["Fireball", "Count"]
-        fig0 = px.bar(freq14, x="Fireball", y="Count", text="Count", title="Last 14 Draws")
+        fig0 = px.bar(freq14, x="Fireball", y="Count", text="Count")  # no title here
         fig0.update_xaxes(type="category", categoryorder="array", categoryarray=DIGITS)
-        fig0.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+        fig0.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True), title=None)
         st.plotly_chart(fig0, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+        card_close()
 
 # ======================================================================
 #                         STREAKS & GAPS -> Gaps tab
 # ======================================================================
 with t_gaps:
     if not df.empty:
-        st.subheader("⏳ Fireball Streaks & Gaps")
+        card_open("⏳ Fireball Streaks & Gaps")
         chron = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
         chron["pos"] = chron.index
         last_pos = chron.groupby("fireball")["pos"].max()
@@ -796,20 +863,18 @@ with t_gaps:
             gap = (N - 1) - int(last_pos.loc[d]) if d in last_pos.index else N
             gaps.append({"Fireball": d, "Draws Since Last Seen": gap})
         gaps_df = pd.DataFrame(gaps)
-        fig_gaps = px.bar(gaps_df, x="Fireball", y="Draws Since Last Seen", text="Draws Since Last Seen",
-                          title="How Long Since Each Fireball Last Hit")
+        fig_gaps = px.bar(gaps_df, x="Fireball", y="Draws Since Last Seen", text="Draws Since Last Seen")
         fig_gaps.update_xaxes(type="category", categoryorder="array", categoryarray=DIGITS)
-        fig_gaps.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+        fig_gaps.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True), title=None)
         st.plotly_chart(fig_gaps, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+        card_close()
 
 # ======================================================================
 #                         AVG CYCLES + HAZARD (fixed) -> Gaps tab
 # ======================================================================
 with t_gaps:
     if not df.empty:
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.subheader("🔄 Fireball Cycle Analysis (Avg vs Current + Hazard)")
-
+        card_open("🔄 Fireball Cycle Analysis (Avg vs Current + Hazard)")
         chron = df.sort_values(["date", "draw_sort"]).reset_index(drop=True)
         chron["pos"] = chron.index
 
@@ -847,7 +912,7 @@ with t_gaps:
             gap_df["__sort_key"] = gap_df["Overdue %"].fillna(-1)
             gap_df = gap_df.sort_values(["__sort_key", "Current Gap"], ascending=[False, False]).drop(columns="__sort_key")
 
-            # --- Build highlighted HTML table ---
+            # --- Highlighted HTML table inside card ---
             def row_html(row):
                 base_cell = "text-align:center; color:#fff;"
                 hi_row_style  = "background:#ffd36b;"
@@ -891,50 +956,54 @@ with t_gaps:
             except Exception as e:
                 st.error(f"Failed to render table: {e}")
 
+            # Compact bar chart (no title)
             fig_gap_compare = px.bar(
                 gap_df,
                 x="Fireball", y=["Avg Gap", "Current Gap"],
-                barmode="group",
-                title="Average vs Current Gaps by Fireball"
+                barmode="group"
             )
             fig_gap_compare.update_layout(
                 xaxis=dict(tickmode="array", tickvals=DIGITS, ticktext=DIGITS, fixedrange=True),
-                yaxis=dict(fixedrange=True)
+                yaxis=dict(fixedrange=True),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                title=None
             )
             st.plotly_chart(
                 fig_gap_compare,
                 use_container_width=True,
                 config={"displayModeBar": False, "scrollZoom": False}
             )
+        card_close()
 
 # ======================================================================
 #                           HEATMAP -> Trends
 # ======================================================================
 with t_trends:
     if not df.empty:
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.subheader("Fireball by Weekday Heatmap")
+        card_open("Fireball by Weekday Heatmap")
         weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         df["weekday"] = pd.to_datetime(df["date"]).dt.day_name()
         heatmap_data = df.groupby(["weekday", "fireball"]).size().reset_index(name="count")
         fireball_order = DIGITS
         pivot = (heatmap_data.pivot(index="weekday", columns="fireball", values="count")
                  .reindex(weekday_order).fillna(0)[fireball_order])
-        fig3 = px.imshow(pivot, labels=dict(x="Fireball", y="Weekday", color="Count"),
-                         x=fireball_order, y=weekday_order,
-                         aspect="auto", color_continuous_scale="Viridis",
-                         title="Fireball Frequency by Weekday")
+        fig3 = px.imshow(
+            pivot,
+            labels=dict(x="Fireball", y="Weekday", color="Count"),
+            x=fireball_order, y=weekday_order,
+            aspect="auto", color_continuous_scale="Viridis"
+        )  # no title
         fig3.update_xaxes(tickmode="array", tickvals=list(range(10)), ticktext=DIGITS, fixedrange=True)
         fig3.update_yaxes(fixedrange=True)
+        fig3.update_layout(title=None)
         st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+        card_close()
 
 # ======================================================================
 #                RECOMMENDATION HISTORY (Last 14) -> Diagnostics
 # ======================================================================
 with t_diag:
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.subheader("📊 Last 14 Fireball Recommendations")
-
+    card_open("📊 Last 14 Fireball Recommendations")
     rec_df = pd.DataFrame(rec_sheet.get_all_records())
 
     if not rec_df.empty and not df.empty:
@@ -951,9 +1020,7 @@ with t_diag:
             df[["date", "draw", "fireball"]],
             on=["date", "draw"],
             how="inner"
-        )
-
-        merged = merged.sort_values(["date", "draw"], ascending=[False, False]).head(14)
+        ).sort_values(["date", "draw"], ascending=[False, False]).head(14)
 
         if not merged.empty:
             merged["hit"] = merged.apply(
@@ -964,7 +1031,7 @@ with t_diag:
             hit_rate = (merged["hit"] == "✅").mean() * 100
             perf_vs_baseline = hit_rate - 10
             perf_str = f"+{perf_vs_baseline:.1f}%" if perf_vs_baseline >= 0 else f"{perf_vs_baseline:.1f}%"
-            st.write(f"Hit Rate: **{hit_rate:.1f}%** (vs baseline 10% → {perf_str})")
+            st.markdown(f"<div style='color:#c8c8c8;'>Hit Rate: <b>{hit_rate:.1f}%</b> (vs baseline 10% → {perf_str})</div>", unsafe_allow_html=True)
 
             merged["draw"] = pd.Categorical(merged["draw"], categories=["Evening", "Midday"], ordered=True)
             table_df = merged.sort_values(["date", "draw"], ascending=[False, True])[
@@ -985,14 +1052,13 @@ with t_diag:
             st.info("No completed recommendations to display yet.")
     else:
         st.info("Not enough data to display recommendation accuracy.")
+    card_close()
 
 # ======================================================================
 #                    ALL-TIME RECOMMENDATION ACCURACY -> Diagnostics
 # ======================================================================
 with t_diag:
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.subheader("📈 All-Time Recommendation Accuracy")
-
+    card_open("📈 All-Time Recommendation Accuracy")
     rec_df = pd.DataFrame(rec_sheet.get_all_records())
 
     if not rec_df.empty and not df.empty:
@@ -1019,11 +1085,12 @@ with t_diag:
             hit_rate_all = (merged_all["hit"] == "✅").mean() * 100
             perf_vs_baseline = hit_rate_all - 10
             perf_str = f"+{perf_vs_baseline:.1f}%" if perf_vs_baseline >= 0 else f"{perf_vs_baseline:.1f}%"
-            st.write(f"Hit Rate: **{hit_rate_all:.1f}%** (vs baseline 10% → {perf_str})")
+            st.markdown(f"<div style='color:#c8c8c8;'>Hit Rate: <b>{hit_rate_all:.1f}%</b> (vs baseline 10% → {perf_str})</div>", unsafe_allow_html=True)
         else:
             st.info("No completed recommendations to calculate all-time accuracy yet.")
     else:
         st.info("Not enough data to display all-time accuracy.")
+    card_close()
 
 # ======================================================================
 # Backfill outcomes → scores in logs
