@@ -844,7 +844,7 @@ with t_trends:
         freq14.columns = ["Fireball", "Count"]
         fig0 = px.bar(freq14, x="Fireball", y="Count", text="Count")  # no title here
         fig0.update_xaxes(type="category", categoryorder="array", categoryarray=DIGITS)
-        fig0.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True), title=None)
+        fig0.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
         st.plotly_chart(fig0, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
         card_close()
 
@@ -865,7 +865,7 @@ with t_gaps:
         gaps_df = pd.DataFrame(gaps)
         fig_gaps = px.bar(gaps_df, x="Fireball", y="Draws Since Last Seen", text="Draws Since Last Seen")
         fig_gaps.update_xaxes(type="category", categoryorder="array", categoryarray=DIGITS)
-        fig_gaps.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True), title=None)
+        fig_gaps.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
         st.plotly_chart(fig_gaps, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
         card_close()
 
@@ -965,8 +965,7 @@ with t_gaps:
             fig_gap_compare.update_layout(
                 xaxis=dict(tickmode="array", tickvals=DIGITS, ticktext=DIGITS, fixedrange=True),
                 yaxis=dict(fixedrange=True),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                title=None
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
             st.plotly_chart(
                 fig_gap_compare,
@@ -1100,5 +1099,6 @@ try:
         backfill_outcomes_and_scores(ws_logs, df)
 except Exception as e:
     st.warning(f"Outcome backfill error: {e}")
+
 
 
