@@ -658,9 +658,9 @@ if existing_rec:
             hit14 = None
         last_draw_date = df["date"].max() if not df.empty else None
 
-        card_open("Engine Health")
+
         st.markdown(render_health_strip(hit14, last_date=last_draw_date), unsafe_allow_html=True)
-        card_close()
+
     except Exception:
         pass
 
@@ -1100,3 +1100,4 @@ try:
         backfill_outcomes_and_scores(ws_logs, df)
 except Exception as e:
     st.warning(f"Outcome backfill error: {e}")
+
