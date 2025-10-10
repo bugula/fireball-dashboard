@@ -57,7 +57,7 @@ def open_log_sheet(client):
 ws_logs = open_log_sheet(client)
 
 def log_recommendation(ws_logs, rec_date, draw, hyper, top_combo, fire_rec, top_conf, slate_norm):
-    # slate_norm is list of (combo, normalized_score)
+    # NOTE: kept for future use, but NOT called (to avoid duplicate writes).
     try:
         row = [
             time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
@@ -448,7 +448,6 @@ def render_health_strip(hit14, baseline=10.0, last_date=None, logloss60=None):
         f"</div>"
     )
 
-
 # --------- Safe, idempotent logging helper (logs once per date+draw) ---------
 def log_model_once(ws_logs, key_date, key_draw, *, model_version, tau_days, alpha,
                    uplift_clip, sim_penalty, top_combo, fire_rec, top_conf, norm_list):
@@ -496,7 +495,7 @@ def log_model_once(ws_logs, key_date, key_draw, *, model_version, tau_days, alph
             top_combo,                                                   # top_pick3
             fire_rec,                                                    # top_fireball
             round(float(top_conf), 6),                                   # top_conf
-            json.dumps(norm_list),                                       # slate_json (we'll store the Norm list)
+            json.dumps(norm_list),                                       # slate_json
             "", "",                                                      # realized_pick3, realized_fireball
             "", "",                                                      # hit_top, slate_hits
             "", ""                                                       # brier_top, logloss_top
@@ -505,7 +504,6 @@ def log_model_once(ws_logs, key_date, key_draw, *, model_version, tau_days, alph
     except Exception:
         # swallow write errors (don’t risk cascading UI errors)
         pass
-
 
 # ======================================================================
 #                           RECOMMENDATION ENGINE
@@ -605,12 +603,7 @@ if existing_rec:
     except Exception:
         pass
 
-    # ---- LOG recommendation + slate (top_conf from play slate, if available) ----
-    top_conf = norm[0][1] if norm else None
-    try:
-        log_recommendation(ws_logs, rec_date, draw_type_for_rec, HYPER, top_combo, fire_rec, top_conf, norm)
-    except Exception as e:
-        st.warning(f"Could not log recommendation: {e}")
+    # >>> IMPORTANT: NO LOGGING HERE (prevents per-refresh writes) <<<
 
 else:
     # ----- compute a new recommendation (UPGRADED) -----
@@ -680,29 +673,21 @@ else:
         except Exception:
             pass
 
-        # ----- log once per (date, draw) to original rec sheet -----
-
+        # ----- log once per (date, draw) (ONLY HERE) -----
         log_model_once(
             ws_logs,
             rec_date_str,
             draw_type_for_rec,
-            model_version="v1.0",
-            tau_days=28,
-            alpha=1.0,
-            uplift_clip="0.5–1.5",
-            sim_penalty=0.15,
+            model_version=MODEL_VERSION,
+            tau_days=HYPER["tau_days"],
+            alpha=HYPER["alpha"],
+            uplift_clip=HYPER["uplift_clip"],
+            sim_penalty=HYPER["sim_penalty"],
             top_combo=top_combo,
             fire_rec=fire_rec,
             top_conf=top_combo_score,
-            norm_list=norm,  # the normalized top-K list we just computed for the slate
+            norm_list=norm,
         )
-
-
-        # ----- also log to model logs (with slate + confidence) -----
-        try:
-            log_recommendation(ws_logs, rec_date, draw_type_for_rec, HYPER, top_combo, fire_rec, norm[0][1], norm)
-        except Exception as e:
-            st.warning(f"Could not log recommendation: {e}")
 
 # ======================================================================
 # Tabs to reduce clutter
@@ -1044,10 +1029,7 @@ with t_diag:
 # Backfill outcomes → scores in logs
 # ======================================================================
 try:
-    if not df.empty:
+    if not df.empty and ws_logs is not None:
         backfill_outcomes_and_scores(ws_logs, df)
 except Exception as e:
     st.warning(f"Outcome backfill error: {e}")
-
-
-
