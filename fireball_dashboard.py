@@ -994,7 +994,6 @@ with t_trends:
         )  # no title
         fig3.update_xaxes(tickmode="array", tickvals=list(range(10)), ticktext=DIGITS, fixedrange=True)
         fig3.update_yaxes(fixedrange=True)
-        fig3.update_layout(title=None)
         st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
         card_close()
 
@@ -1099,6 +1098,7 @@ try:
         backfill_outcomes_and_scores(ws_logs, df)
 except Exception as e:
     st.warning(f"Outcome backfill error: {e}")
+
 
 
 
