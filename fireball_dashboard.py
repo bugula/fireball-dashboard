@@ -1002,21 +1002,23 @@ with t_trends:
 # ======================================================================
 with t_diag:
     card_open("📊 Last 14 Fireball Recommendations")
-    rec_df = pd.DataFrame(rec_sheet.get_all_records())
+    logs_df = pd.DataFrame(ws_logs.get_all_records())
 
-    if not rec_df.empty and not df.empty:
-        rec_df.columns = rec_df.columns.str.strip().str.lower()
-        df.columns     = df.columns.str.strip().str.lower()
+    if not logs_df.empty and not df.empty:
+        logs_df.columns = logs_df.columns.str.strip().str.lower()
+        df.columns      = df.columns.str.strip().str.lower()
 
-        rec_df["date"] = pd.to_datetime(rec_df["date"], errors="coerce").dt.date
-        rec_df["draw"] = rec_df["draw"].astype(str).str.strip().str.title()
-        df["date"]     = pd.to_datetime(df["date"], errors="coerce").dt.date
-        df["draw"]     = df["draw"].astype(str).str.strip().str.title()
+        logs_df["date"] = pd.to_datetime(logs_df["date"], errors="coerce").dt.date
+        logs_df["draw"] = logs_df["draw"].astype(str).str.strip().str.title()
+        df["date"]      = pd.to_datetime(df["date"], errors="coerce").dt.date
+        df["draw"]      = df["draw"].astype(str).str.strip().str.title()
+
+        logs_df = logs_df.rename(columns={"top_fireball":"recommended_fireball"})
 
         merged = pd.merge(
-            rec_df,
-            df[["date", "draw", "fireball"]],
-            on=["date", "draw"],
+            logs_df[["date","draw","recommended_fireball"]],
+            df[["date","draw","fireball"]],
+            on=["date","draw"],
             how="inner"
         ).sort_values(["date", "draw"], ascending=[False, False]).head(14)
 
@@ -1057,21 +1059,23 @@ with t_diag:
 # ======================================================================
 with t_diag:
     card_open("📈 All-Time Recommendation Accuracy")
-    rec_df = pd.DataFrame(rec_sheet.get_all_records())
+    logs_df = pd.DataFrame(ws_logs.get_all_records())
 
-    if not rec_df.empty and not df.empty:
-        rec_df.columns = rec_df.columns.str.strip().str.lower()
-        df.columns     = df.columns.str.strip().str.lower()
+    if not logs_df.empty and not df.empty:
+        logs_df.columns = logs_df.columns.str.strip().str.lower()
+        df.columns      = df.columns.str.strip().str.lower()
 
-        rec_df["date"] = pd.to_datetime(rec_df["date"], errors="coerce").dt.date
-        rec_df["draw"] = rec_df["draw"].astype(str).str.strip().str.title()
-        df["date"]     = pd.to_datetime(df["date"], errors="coerce").dt.date
-        df["draw"]     = df["draw"].astype(str).str.strip().str.title()
+        logs_df["date"] = pd.to_datetime(logs_df["date"], errors="coerce").dt.date
+        logs_df["draw"] = logs_df["draw"].astype(str).str.strip().str.title()
+        df["date"]      = pd.to_datetime(df["date"], errors="coerce").dt.date
+        df["draw"]      = df["draw"].astype(str).str.strip().str.title()
 
-        merged_all = pd.merge(
-            rec_df,
-            df[["date", "draw", "fireball"]],
-            on=["date", "draw"],
+        logs_df = logs_df.rename(columns={"top_fireball":"recommended_fireball"})
+
+        merged = pd.merge(
+            logs_df[["date","draw","recommended_fireball"]],
+            df[["date","draw","fireball"]],
+            on=["date","draw"],
             how="inner"
         )
 
@@ -1098,6 +1102,7 @@ try:
         backfill_outcomes_and_scores(ws_logs, df)
 except Exception as e:
     st.warning(f"Outcome backfill error: {e}")
+
 
 
 
