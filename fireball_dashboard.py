@@ -1059,40 +1059,54 @@ with t_diag:
 # ======================================================================
 with t_diag:
     card_open("📈 All-Time Recommendation Accuracy")
-    logs_df = pd.DataFrame(ws_logs.get_all_records())
 
-    if not logs_df.empty and not df.empty:
-        logs_df.columns = logs_df.columns.str.strip().str.lower()
-        df.columns      = df.columns.str.strip().str.lower()
-
-        logs_df["date"] = pd.to_datetime(logs_df["date"], errors="coerce").dt.date
-        logs_df["draw"] = logs_df["draw"].astype(str).str.strip().str.title()
-        df["date"]      = pd.to_datetime(df["date"], errors="coerce").dt.date
-        df["draw"]      = df["draw"].astype(str).str.strip().str.title()
-
-        logs_df = logs_df.rename(columns={"top_fireball":"recommended_fireball"})
-
-        merged = pd.merge(
-            logs_df[["date","draw","recommended_fireball"]],
-            df[["date","draw","fireball"]],
-            on=["date","draw"],
-            how="inner"
-        )
-
-        if not merged_all.empty:
-            merged_all["hit"] = merged_all.apply(
-                lambda r: "✅" if str(r["fireball"]) == str(r["recommended_fireball"]) else "❌",
-                axis=1
-            )
-            hit_rate_all = (merged_all["hit"] == "✅").mean() * 100
-            perf_vs_baseline = hit_rate_all - 10
-            perf_str = f"+{perf_vs_baseline:.1f}%" if perf_vs_baseline >= 0 else f"{perf_vs_baseline:.1f}%"
-            st.markdown(f"<div style='color:#c8c8c8;'>Hit Rate: <b>{hit_rate_all:.1f}%</b> (vs baseline 10% → {perf_str})</div>", unsafe_allow_html=True)
-        else:
-            st.info("No completed recommendations to calculate all-time accuracy yet.")
-    else:
+    if ws_logs is None or df.empty:
         st.info("Not enough data to display all-time accuracy.")
-    card_close()
+        card_close()
+    else:
+        logs_df = pd.DataFrame(ws_logs.get_all_records())
+
+        if not logs_df.empty:
+            logs_df.columns = logs_df.columns.str.strip().str.lower()
+            df.columns      = df.columns.str.strip().str.lower()
+
+            logs_df["date"] = pd.to_datetime(logs_df["date"], errors="coerce").dt.date
+            logs_df["draw"] = logs_df["draw"].astype(str).str.strip().str.title()
+            df["date"]      = pd.to_datetime(df["date"], errors="coerce").dt.date
+            df["draw"]      = df["draw"].astype(str).str.strip().str.title()
+
+            # map model_logs → generic recommendation schema
+            logs_df = logs_df.rename(columns={"top_fireball": "recommended_fireball"})
+
+            merged_all = pd.merge(
+                logs_df[["date", "draw", "recommended_fireball"]],
+                df[["date", "draw", "fireball"]],
+                on=["date", "draw"],
+                how="inner"
+            )
+
+            if not merged_all.empty:
+                merged_all["hit"] = merged_all.apply(
+                    lambda r: "✅" if str(r["fireball"]) == str(r["recommended_fireball"]) else "❌",
+                    axis=1
+                )
+                hit_rate_all = (merged_all["hit"] == "✅").mean() * 100
+                perf_vs_baseline = hit_rate_all - 10
+                perf_str = f"+{perf_vs_baseline:.1f}%" if perf_vs_baseline >= 0 else f"{perf_vs_baseline:.1f}%"
+
+                st.markdown(
+                    f"<div style='color:#c8c8c8;'>"
+                    f"Hit Rate: <b>{hit_rate_all:.1f}%</b> (vs baseline 10% → {perf_str})"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+            else:
+                st.info("No completed recommendations to calculate all-time accuracy yet.")
+        else:
+            st.info("No logged recommendations yet in model_logs.")
+
+        card_close()
+
 
 # ======================================================================
 # Backfill outcomes → scores in logs
@@ -1102,6 +1116,7 @@ try:
         backfill_outcomes_and_scores(ws_logs, df)
 except Exception as e:
     st.warning(f"Outcome backfill error: {e}")
+
 
 
 
